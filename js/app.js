@@ -11,7 +11,9 @@ import {
   initMenu, refreshMenu, startPreview, stopPreview, showReport,
   bindAuth, showAuthScreen, toast, closePane, openPane,
 } from './menu.js';
-import { initLanding, showLanding, hideLanding } from './landing.js';
+import { initLanding, showLanding, hideLanding, setMode } from './landing.js';
+import { makeRoom, quickRoom } from './rooms.js';
+import { modeFor } from './modes.js';
 import { $, storage } from './util.js';
 
 const app = { arena: null };
@@ -28,6 +30,8 @@ function showMenu() {
   refreshMenu();
   stopPreview();
   startPreview();
+  // Keep the room directory warm so quickplay knows which servers are live.
+  if (state.uid) net.watchDirectory(() => {});
 }
 
 async function boot() {
@@ -109,16 +113,42 @@ initLanding({
 });
 
 // ---------------------------------------------------------------- arena
-function startArena() {
+async function startArena(room) {
   if (app.arena) { app.arena.stop(); app.arena = null; }
   closePane();
   stopPreview();
   $('#modal-root').innerHTML = '';
+  const modeId = room?.mode || modeFor(state.settings.mode).id;
+  const resolved = room?.name ? room : await resolveQuickRoom(modeId);
+  setMode(resolved.mode);
   setScreen('screen-game');
-  const arena = new Arena({ onReport: finishMatch, mode: state.settings.mode });
+  const arena = new Arena({ onReport: finishMatch, mode: resolved.mode, room: resolved });
   app.arena = arena;
   arena.start();
 }
+
+// Give the presence directory a beat to sync before falling back to ALPHA.
+async function resolveQuickRoom(mode) {
+  if (!net.directory.synced) {
+    await new Promise((done) => {
+      let stop = () => {};
+      stop = net.watchDirectory(() => {
+        if (!net.directory.synced) return;
+        stop();
+        done();
+      });
+      setTimeout(() => { stop(); done(); }, 1000);
+    });
+  }
+  return quickRoom(mode, net.directory.rooms);
+}
+
+// Server browser / "play again" ask for a specific room by name.
+document.addEventListener('ironstorm:join', (e) => {
+  const room = e.detail;
+  if (!room?.name) return;
+  startArena(makeRoom(room.mode || modeFor(state.settings.mode).id, room.name));
+});
 
 async function finishMatch(data) {
   app.arena = null;

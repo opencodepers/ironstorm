@@ -11,6 +11,81 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, {
 export { sb };
 export const net = { online: true, arena: null, roster: new Map() };
 
+// ------------------------------------------------------------------
+//  Room directory
+//  Every player inside a room publishes it on one presence channel, so
+//  the server browser can list live rooms and how full they are.
+// ------------------------------------------------------------------
+const DIR_CHANNEL = 'ironstorm-directory-v1';
+
+export const directory = { rooms: [], synced: false };
+
+let dirChannel = null;
+let dirPending = null;
+const dirListeners = new Set();
+
+function emitDirectory() {
+  if (!dirChannel) return;
+  const out = [];
+  for (const [key, arr] of Object.entries(dirChannel.presenceState())) {
+    if (key === state.uid) continue;
+    const meta = arr[0];
+    if (!meta?.room) continue;
+    out.push({
+      uid: key,
+      mode: meta.mode || 'deathmatch',
+      room: meta.room,
+      roomName: meta.roomName || 'ALPHA',
+    });
+  }
+  directory.rooms = out;
+  directory.synced = true;
+  for (const fn of dirListeners) {
+    try { fn(out); } catch { /* ignore */ }
+  }
+}
+
+function ensureDirectory() {
+  if (dirChannel) return dirChannel;
+  if (!state.uid) return null;
+  dirChannel = sb.channel(DIR_CHANNEL, { config: { presence: { key: state.uid } } });
+  dirChannel
+    .on('presence', { event: 'sync' }, emitDirectory)
+    .on('presence', { event: 'join' }, emitDirectory)
+    .on('presence', { event: 'leave' }, emitDirectory)
+    .subscribe(async (status) => {
+      if (status !== 'SUBSCRIBED') return;
+      if (dirPending) {
+        try { await dirChannel.track(dirPending); } catch { /* ignore */ }
+        dirPending = null;
+      }
+      emitDirectory();
+    });
+  return dirChannel;
+}
+
+export function watchDirectory(fn) {
+  dirListeners.add(fn);
+  ensureDirectory();
+  fn(directory.rooms);
+  return () => dirListeners.delete(fn);
+}
+
+export function trackDirectory(meta) {
+  dirPending = meta;
+  const ch = ensureDirectory();
+  if (!ch || ch.state !== 'joined') return;
+  try {
+    const p = ch.track(meta);
+    if (p?.catch) p.catch(() => {});
+  } catch { /* presence may be disabled */ }
+}
+
+export function untrackDirectory() {
+  dirPending = null;
+  try { dirChannel?.untrack(); } catch { /* ignore */ }
+}
+
 const emailFor = (username) => `${username.toLowerCase()}@${EMAIL_DOMAIN}`;
 
 export function validUsername(u) {
@@ -165,13 +240,14 @@ export async function equipTank(id) {
 // ------------------------------------------------------------------
 //  Realtime arena
 // ------------------------------------------------------------------
-export function connectArena(handlers = {}) {
+export function connectArena(handlers = {}, room = null) {
   if (!state.uid) return { ok: false, error: 'not signed in', leave() {} };
   const isGuest = state.mode === 'guest';
   const uid = state.uid;
   const p = state.profile;
+  const channelName = room?.key ? `${ARENA_CHANNEL}:${room.key}` : ARENA_CHANNEL;
 
-  const channel = sb.channel(ARENA_CHANNEL, {
+  const channel = sb.channel(channelName, {
     config: {
       broadcast: { self: false, ack: false },
       presence: { key: uid },
@@ -185,6 +261,9 @@ export function connectArena(handlers = {}) {
     level: p.level,
     guest: isGuest,
     squad: state.settings.squad || '',
+    mode: room?.mode || 'deathmatch',
+    room: room?.key || '',
+    roomName: room?.name || '',
   };
 
   channel
@@ -241,6 +320,15 @@ export function connectArena(handlers = {}) {
     net.online = status === 'SUBSCRIBED';
     if (status === 'SUBSCRIBED') {
       try { await channel.track(meta); } catch { /* presence may be disabled */ }
+      if (room?.key) {
+        trackDirectory({
+          mode: room.mode,
+          room: room.key,
+          roomName: room.name,
+          name: p.username,
+          level: p.level,
+        });
+      }
       send('join', meta);
       handlers.onReady?.();
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
@@ -272,6 +360,7 @@ export function connectArena(handlers = {}) {
     sendChat(text) { send('chat', { from: p.username, text: String(text).slice(0, 120), t: Date.now() }); },
     leave() {
       if (sendTimer) clearInterval(sendTimer);
+      untrackDirectory();
       send('bye', { uid });
       try { channel.untrack(); } catch { /* ignore */ }
       try { sb.removeChannel(channel); } catch { /* ignore */ }

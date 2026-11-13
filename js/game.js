@@ -45,9 +45,10 @@ const MAPS = [
 ];
 
 export class Arena {
-  constructor({ onExit, onReport, mode = 'deathmatch' } = {}) {
+  constructor({ onExit, onReport, mode = 'deathmatch', room = null } = {}) {
     this.onExit = onExit;
     this.onReport = onReport;
+    this.room = room || { mode, name: 'ALPHA', key: `${mode}:alpha` };
     this.modeId = mode;
     this.mode = modeFor(mode);
     this.matchLen = this.mode.duration || 0;
@@ -84,6 +85,7 @@ export class Arena {
       objectiveLabel: $('#hud-objective-label'), remaining: $('#hud-remaining'),
       modebar: $('#hud-modebar'), medals: $('#hud-medals'), lives: $('#hud-lives'),
       spectate: $('#hud-spectate'), spectateName: $('#hud-spectate-name'),
+      room: $('#hud-room'),
     };
 
     this.running = false;
@@ -173,6 +175,7 @@ export class Arena {
     this.hud.chatWrap?.classList.add('hidden');
     this.hud.pause?.classList.add('hidden');
     this.hud.respawn?.classList.add('hidden');
+    if (this.hud.room) this.hud.room.textContent = this.room.name;
 
     this.connect();
 
@@ -212,6 +215,7 @@ export class Arena {
       mode: this.mode.id, modeName: this.mode.name,
       verdict: this.result?.label || null, wave: this.wave,
       teamScore: this.teamScore.slice(),
+      room: { mode: this.room.mode, name: this.room.name },
       replay: this.replay || (this.replayBuf.length ? this.compileReplay() : null),
       accuracy: s.shots ? Math.round((s.hits / s.shots) * 100) : 0,
     };
@@ -562,7 +566,7 @@ export class Arena {
           }
         },
         onChat: (c) => this.addChat(c.from, c.text),
-      });
+      }, this.room);
     } catch (e) {
       console.warn('[net]', e);
       this.net = null;
@@ -1761,6 +1765,8 @@ export class Arena {
     ctx.font = '400 11px "Share Tech Mono", monospace';
     ctx.letterSpacing = '2px';
     ctx.fillText(`${this.mapName}  ·  ${this.weather.toUpperCase()}`, cx, vh * 0.525);
+    ctx.fillStyle = '#8fe86b';
+    ctx.fillText(`SERVER ${this.room.name}`, cx, vh * 0.565);
 
     const w = Math.min(vw * 0.34, 420);
     const y = vh * 0.75;

@@ -319,3 +319,8 @@
 /* the deploy cinematic owns the screen; HUD fades in as it hands over */
 #hud { transition: opacity .35s ease; }
 #hud.intro { opacity: 0; }
+.hm-room {
+  font-family: var(--display); font-size: 10px; letter-spacing: .16em;
+  color: #8fe86b; padding-right: 16px; border-right: 1px solid #24331f;
+  max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

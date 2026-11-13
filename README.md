@@ -121,3 +121,17 @@ Artwork: Kenney "Top-down Tanks Remastered" (CC0).
   their hull in the live arena. Codes are shared out of band; the arena is still one global battle.
 - **Spectating** — when your vehicle is destroyed the camera follows a living tank with a SPECTATING
   bar, and A/D cycles targets until you redeploy.
+
+## Servers, rooms and quickplay
+
+- **Named rooms** — every match runs on its own realtime channel keyed by warzone and server name
+  (`ironstorm-arena-v1:deathmatch:raid-night`), so two players who type the same name land in the
+  same battle. The server name appears in the deploy cinematic, the HUD mode bar and the report.
+- **Server browser** — the SERVERS pane lists the default room for the selected warzone plus every
+  live room with its occupancy (`3/12`), and joins any row directly.
+- **Quickplay** — PLAY joins the busiest room of the selected warzone that still has a slot, falling
+  back to `ALPHA`. Play Again returns to the same server.
+- **Join by name** — typing a name joins that live room in whatever warzone it runs in, or creates it
+  in the selected warzone. Rooms hold 12 commanders; local bots still fill out the arena.
+- **Directory** — occupancy is published over a presence channel (`ironstorm-directory-v1`) rather
+  than Postgres, so rooms need no schema change and empty rooms simply disappear from the browser.

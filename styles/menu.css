@@ -1083,3 +1083,58 @@ input[type=range]::-moz-range-thumb {
   .squad-hero { flex-direction: column; gap: 14px; }
   .squad-code { min-width: 0; }
 }
+
+/* ==================================================================
+   Server browser
+   ================================================================== */
+.srv-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.srv-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.srv-tab {
+  font-family: var(--font); font-size: 9px; letter-spacing: .16em;
+  color: #8a9c80; background: rgba(10, 18, 11, .6);
+  border: 1px solid #2c4026; padding: 7px 11px; cursor: pointer;
+  transition: color .2s, border-color .2s, background .2s;
+}
+.srv-tab:hover { color: #cfe2c0; border-color: #46603a; }
+.srv-tab.on { color: #0a120b; background: #8fe86b; border-color: #8fe86b; }
+.srv-refresh {
+  font-family: var(--font); font-size: 8.5px; letter-spacing: .2em;
+  color: #7f9074; background: none; border: 0; cursor: pointer; padding: 6px;
+}
+.srv-refresh:hover { color: #b6f79a; }
+
+.srv-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.srv-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 120px auto;
+  align-items: center; gap: 16px;
+  padding: 10px 14px;
+  background: rgba(9, 16, 10, .6);
+  border: 1px solid #2a3a24;
+  border-left: 2px solid #4d8f34;
+}
+.srv-row.full { opacity: .6; border-left-color: #7a4638; }
+.srv-id { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.srv-id b {
+  font-family: var(--display); font-size: 13px; letter-spacing: .12em; color: #e2f0d6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.srv-id span { font-size: 8.5px; letter-spacing: .16em; color: #6f8065; }
+.srv-occ { height: 4px; background: rgba(255, 255, 255, .07); }
+.srv-occ i { display: block; height: 100%; background: linear-gradient(90deg, #4d8f34, #8fe86b); }
+.srv-row.full .srv-occ i { background: #8a5244; }
+
+.srv-join { display: flex; align-items: flex-end; gap: 12px; max-width: 460px; }
+.srv-join .field { flex: 1; }
+.srv-join input { text-transform: uppercase; letter-spacing: .22em; }
+.srv-quick { width: 100%; margin-top: 14px; justify-content: center; }
+
+/* the shared .field/.btn styles assume a full-width form, so size the
+   join row explicitly */
+.srv-join { flex-wrap: wrap; align-items: flex-end; }
+.srv-join .field { flex: 1 1 240px; min-width: 0; }
+.srv-join .field span { white-space: nowrap; }
+.srv-join input {
+  width: 100%; box-sizing: border-box;
+  padding: 11px 12px; min-height: 40px;
+}
+.srv-join .btn { flex: 0 0 auto; width: auto; padding: 12px 30px; }

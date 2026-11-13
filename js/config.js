@@ -23,6 +23,7 @@ export const NET = {
 };
 
 export const DEFAULT_SETTINGS = {
+  mode: 'deathmatch',
   music: 0.3,
   sfx: 0.8,
   shake: 1,

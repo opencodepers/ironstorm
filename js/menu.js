@@ -13,6 +13,9 @@ import {
   SKINS, SKIN_ORDER, skinCss, skinFor, xpForLevel,
 } from './tanks.js';
 import { MODES, MODE_ORDER } from './modes.js';
+import {
+  ROOM_CAPACITY, roomDisplayName, roomRows, makeRoom, quickRoom, findRoomByName,
+} from './rooms.js';
 import { selectedMode, setMode } from './landing.js';
 import { audio } from './audio.js';
 import { img } from './assets.js';
@@ -41,6 +44,7 @@ export const ICONS = {
   coin: `<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="6.4" ry="8.6" fill="#c9a227"/><ellipse cx="12" cy="12" rx="6.4" ry="8.6" fill="none" stroke="#f0d67a" stroke-width="1.2"/><ellipse cx="12" cy="12" rx="4" ry="6" fill="none" stroke="#8f6f14" stroke-width="1"/><path d="M12 8.2c-2 0-3 .9-3 2s1 1.7 3 2.1 3 1 3 2.1-1 2-3 2" fill="none" stroke="#f7e6a6" stroke-width="1.5"/></svg>`,
   user: svg('<circle cx="12" cy="8.2" r="3.6"/><path d="M4.8 20.2c1.3-3.6 4-5.4 7.2-5.4s5.9 1.8 7.2 5.4"/>'),
   squad: svg('<circle cx="9" cy="8.4" r="3.1"/><path d="M3.4 19.8c1-3.1 3.2-4.7 5.6-4.7s4.6 1.6 5.6 4.7"/><circle cx="17" cy="9.6" r="2.3"/><path d="M15.6 15.5c1.8.3 3.3 1.7 4.1 4.3"/>'),
+  servers: svg('<rect x="3" y="3.6" width="18" height="6.4" rx="1.4"/><rect x="3" y="13.6" width="18" height="6.4" rx="1.4"/><path d="M6.6 6.8h.1M6.6 16.8h.1"/>'),
   skull: svg('<path d="M12 3a7 7 0 0 0-4.2 12.6V19h8.4v-3.4A7 7 0 0 0 12 3z"/><circle cx="9.2" cy="11" r="1.4" fill="currentColor" stroke="none"/><circle cx="14.8" cy="11" r="1.4" fill="currentColor" stroke="none"/><path d="M9.6 19v2M14.4 19v2"/>'),
   target: svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>'),
   cart: svg('<path d="M2.6 4.2h2.6l2.5 10.4h9.4l2.1-7.4H7"/><circle cx="9.4" cy="19" r="1.5"/><circle cx="17.4" cy="19" r="1.5"/>'),
@@ -53,12 +57,15 @@ let currentPane = null;
 let previewRaf = 0;
 let leaderMetric = 'kills';
 let shopTab = 'vehicles';
+let serverFilter = null;
+let serverUnsub = null;
 
 const PANE_META = {
   upgrades: { title: 'UPGRADES', sub: 'Spend credits on permanent hull improvements' },
   garage: { title: 'GARAGE', sub: 'Select and requisition armoured vehicles' },
   shop: { title: 'SHOP', sub: 'Vehicles, camouflage patterns and daily supply drops' },
   squad: { title: 'SQUAD', sub: 'Form up and roll into the same arena' },
+  servers: { title: 'SERVERS', sub: 'Quickplay, or join a match by server name' },
   leaderboards: { title: 'LEADERBOARDS', sub: 'Global rankings of the Iron Corps' },
   gameplay: { title: 'GAMEPLAY', sub: 'Audio, controls and account settings' },
 };
@@ -312,6 +319,7 @@ export function stopPreview() {
 // ---------------------------------------------------------------- panes
 export function openPane(name) {
   if (!PANE_META[name]) return;
+  stopWatchingServers();
   currentPane = name;
   const root = $('#pane-root');
   root.classList.remove('hidden');
@@ -322,6 +330,7 @@ export function openPane(name) {
 export function closePane() {
   const root = $('#pane-root');
   if (!root || root.classList.contains('hidden') || root.classList.contains('closing')) return;
+  stopWatchingServers();
   currentPane = null;
   root.classList.add('closing');
   setTimeout(() => {
@@ -341,6 +350,7 @@ function renderPane() {
     gameplay: renderGameplay,
     shop: renderShop,
     squad: renderSquad,
+    servers: renderServers,
   }[currentPane]?.() ?? '';
 
   root.innerHTML = `
@@ -448,6 +458,43 @@ function wirePane() {
       if (e.key === 'Enter') join();
     });
   }
+  if (currentPane === 'servers') {
+    stopWatchingServers();
+    serverUnsub = net.watchDirectory(() => paintServerList());
+    $$('#pane-root [data-srv-mode]').forEach((b) => b.addEventListener('click', () => {
+      serverFilter = b.dataset.srvMode;
+      audio.play('ui');
+      rerenderPaneBody();
+    }));
+    $('#srv-refresh')?.addEventListener('click', () => {
+      audio.play('ui');
+      paintServerList();
+      toast('Server list refreshed', 'info');
+    });
+    $('#srv-quick')?.addEventListener('click', () => {
+      const mode = serverFilter || selectedMode().id;
+      const room = quickRoom(mode, net.directory.rooms);
+      joinServer(room.mode, room.name);
+    });
+    wireServerRows();
+    const joinByName = () => {
+      const input = $('#srv-name');
+      const name = roomDisplayName(input?.value);
+      if (!name) {
+        audio.play('deny');
+        toast('Enter a server name first', 'bad');
+        input?.focus();
+        return;
+      }
+      const live = findRoomByName(net.directory.rooms, name);
+      joinServer(live?.mode || serverFilter || selectedMode().id, name);
+    };
+    $('#srv-join-btn')?.addEventListener('click', joinByName);
+    $('#srv-name')?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') joinByName();
+    });
+  }
 }
 
 function rerenderPaneBody() {
@@ -459,6 +506,7 @@ function rerenderPaneBody() {
     gameplay: renderGameplay,
     shop: renderShop,
     squad: renderSquad,
+    servers: renderServers,
   }[currentPane]?.() ?? '';
   const holder = root.querySelector('.pane-body');
   if (holder) holder.innerHTML = body;
@@ -887,6 +935,78 @@ function renderSquad() {
     </div>`;
 }
 
+// ---- servers -----------------------------------------------------
+function stopWatchingServers() {
+  if (serverUnsub) {
+    serverUnsub();
+    serverUnsub = null;
+  }
+}
+
+function renderServers() {
+  const mode = serverFilter || selectedMode().id;
+  return `<div class="srv-head">
+      <div class="srv-tabs">${MODE_ORDER.map((id) =>
+        `<button class="srv-tab ${id === mode ? 'on' : ''}" data-srv-mode="${id}">${MODES[id].name}</button>`).join('')}</div>
+      <button class="srv-refresh" id="srv-refresh">REFRESH</button>
+    </div>
+    <div class="srv-list" id="srv-list">${serverRowsHtml(mode)}</div>
+    <div class="srv-join">
+      <label class="field"><span>JOIN BY SERVER NAME</span>
+        <input id="srv-name" maxlength="16" placeholder="MY SERVER" autocomplete="off" spellcheck="false" />
+      </label>
+      <button class="btn" id="srv-join-btn">JOIN</button>
+    </div>
+    <button class="btn srv-quick" id="srv-quick">QUICKPLAY · ${MODES[mode].name}</button>
+    <p class="pane-note">Quickplay drops you into the busiest ${MODES[mode].name} server with a free slot. Server names are shared by everyone — tell a friend the name and you land in the same match.</p>`;
+}
+
+function serverRowsHtml(mode) {
+  return roomRows(mode, net.directory.rooms).map((r) => {
+    const full = r.players >= ROOM_CAPACITY;
+    const pct = clamp((r.players / ROOM_CAPACITY) * 100, 2, 100);
+    return `<article class="srv-row ${full ? 'full' : ''}">
+      <div class="srv-id">
+        <b>${esc(r.name)}</b>
+        <span>${MODES[mode].name} · ${r.players}/${ROOM_CAPACITY}${r.players === 0 ? ' · EMPTY' : ''}</span>
+      </div>
+      <div class="srv-occ"><i style="width:${pct}%"></i></div>
+      <button class="sc-buy ${full ? 'locked' : ''}" data-join-mode="${r.mode}" data-join-name="${esc(r.name)}" ${full ? 'disabled' : ''}>${full ? 'FULL' : 'JOIN'}</button>
+    </article>`;
+  }).join('');
+}
+
+function paintServerList() {
+  if (currentPane !== 'servers') return;
+  const holder = $('#srv-list');
+  if (!holder) return;
+  holder.innerHTML = serverRowsHtml(serverFilter || selectedMode().id);
+  wireServerRows();
+}
+
+function wireServerRows() {
+  $$('#srv-list [data-join-name]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.joinMode;
+      const row = roomRows(mode, net.directory.rooms).find((r) => r.name === btn.dataset.joinName);
+      joinServer(mode, btn.dataset.joinName, row?.players || 0);
+    });
+  });
+}
+
+function joinServer(mode, name, players = null) {
+  const row = roomRows(mode, net.directory.rooms).find((r) => r.name === roomDisplayName(name));
+  const count = players ?? row?.players ?? 0;
+  if (count >= ROOM_CAPACITY) {
+    audio.play('deny');
+    toast('That server is full', 'bad');
+    return;
+  }
+  audio.play('ui');
+  document.dispatchEvent(new CustomEvent('ironstorm:join', { detail: makeRoom(mode, name) }));
+  closePane();
+}
+
 async function doSkin(id, btn) {
   const s = SKINS[id];
   if (!s) return;
@@ -1078,7 +1198,7 @@ function renderGameplay() {
           ${[0, 3, 6, 9].map((n) => `<button data-bots="${n}" class="${s.bots === n ? 'on' : ''}">${n}</button>`).join('')}
         </div>
       </div>
-      <p class="set-note">Bots keep the arena alive. Real commanders join the same global arena in real time.</p>
+      <p class="set-note">Bots keep the arena alive. Real commanders join the same server in real time — see SERVERS.</p>
     </section>
 
     <section class="set-card account-card">
@@ -1233,7 +1353,7 @@ export function showReport(data) {
       <div class="report-head">
         <div>
           <h2>BATTLE REPORT</h2>
-          <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
+          <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.room ? ` · SERVER <b>${esc(data.room.name)}</b>` : ''}${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
         </div>
         <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
       </div>
@@ -1293,7 +1413,11 @@ export function showReport(data) {
   $('#report-again')?.addEventListener('click', () => {
     stopReplay();
     root.innerHTML = '';
-    startArenaFlow();
+    if (data.room?.name) {
+      document.dispatchEvent(new CustomEvent('ironstorm:join', { detail: data.room }));
+    } else {
+      startArenaFlow();
+    }
   });
 }
 
