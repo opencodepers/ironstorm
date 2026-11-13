@@ -33,6 +33,7 @@ export function newGuestProfile() {
     skin: 'olive',
     ownedSkins: ['olive'],
     lastDaily: 0,
+    contracts: { day: todayKey(), mode: featuredModeFor(), kills: 0, wins: 0, matches: 0, claimed: [] },
     upgrades: { ...DEFAULT_UPGRADES },
     kills: 0,
     deaths: 0,
@@ -55,6 +56,7 @@ export function fromRow(row) {
     skin: row.skin || 'olive',
     ownedSkins: Array.isArray(row.owned_skins) && row.owned_skins.length ? row.owned_skins : ['olive'],
     lastDaily: row.last_daily ? Date.parse(row.last_daily) || 0 : 0,
+    contracts: row.contracts || null,
     upgrades: { ...DEFAULT_UPGRADES, ...(row.upgrades || {}) },
     kills: row.kills ?? 0,
     deaths: row.deaths ?? 0,
@@ -174,7 +176,7 @@ export function buyUpgradeLocal(key) {
   return { ok: true };
 }
 
-export function applyMatchRewards({ kills, deaths, score, won, credits, xp }) {
+export function applyMatchRewards({ kills, deaths, score, won, credits, xp, mode }) {
   const p = state.profile;
   p.credits += credits;
   p.xp += xp;
@@ -185,7 +187,68 @@ export function applyMatchRewards({ kills, deaths, score, won, credits, xp }) {
   p.bestScore = Math.max(p.bestScore, score);
   p.bestKills = Math.max(p.bestKills, kills);
   p.level = levelForXp(p.xp);
+  bumpContracts({ kills, won, mode });
   save();
 }
 
 export function updateSettingsFromProfile() {}
+
+// ----------------------------------------------------------------
+//  Daily contracts
+// ----------------------------------------------------------------
+export const CONTRACT_DEFS = [
+  { key: 'kills', target: 8, reward: 400, title: 'DESTROY 8 TANKS', sub: 'in today’s featured warzone ({mode})' },
+  { key: 'wins', target: 2, reward: 350, title: 'WIN 2 BATTLES', sub: 'any warzone' },
+  { key: 'matches', target: 4, reward: 250, title: 'COMPLETE 4 MATCHES', sub: 'any warzone' },
+];
+
+const MODE_IDS = ['deathmatch', 'team', 'koth', 'survival'];
+
+export function todayKey(d = new Date()) {
+  return d.toISOString().slice(0, 10);
+}
+
+export function featuredModeFor(d = new Date()) {
+  const start = Date.UTC(d.getUTCFullYear(), 0, 0);
+  const day = Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start) / 86400000);
+  return MODE_IDS[day % 4];
+}
+
+export function ensureContracts() {
+  const p = state.profile;
+  if (!p) return null;
+  const day = todayKey();
+  if (!p.contracts || p.contracts.day !== day) {
+    p.contracts = { day, mode: featuredModeFor(), kills: 0, wins: 0, matches: 0, claimed: [] };
+    save();
+  }
+  p.contracts.claimed = p.contracts.claimed || [];
+  return p.contracts;
+}
+
+function bumpContracts({ kills, won, mode }) {
+  const c = ensureContracts();
+  if (!c) return;
+  c.matches = (c.matches || 0) + 1;
+  if (won) c.wins = (c.wins || 0) + 1;
+  if (mode === c.mode) c.kills = (c.kills || 0) + (kills || 0);
+  save();
+}
+
+export function claimContractLocal(index) {
+  const c = ensureContracts();
+  const def = CONTRACT_DEFS[index];
+  if (!c || !def) return { ok: false, why: 'Unknown contract' };
+  if ((c.claimed || []).includes(index)) return { ok: false, why: 'Already claimed' };
+  if ((c[def.key] || 0) < def.target) return { ok: false, why: 'Contract not complete' };
+  c.claimed.push(index);
+  state.profile.credits += def.reward;
+  save();
+  return { ok: true, reward: def.reward };
+}
+
+export function unlockRankCrateLocal() {
+  if (!state.profile) return;
+  state.profile.lastDaily = 0;
+  save();
+}

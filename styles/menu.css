@@ -895,3 +895,63 @@ input[type=range]::-moz-range-thumb {
   .pane, .pane-backdrop, .tank-card, .shop-card, .upgrade-card, .set-card, .credits-num,
   #screen-menu, #screen-auth { animation: none !important; }
 }
+
+/* ==================================================================
+   Contracts, kill cam, rank-up
+   ================================================================== */
+.contract-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.contract-card {
+  border: 1px solid #26361f; background: linear-gradient(180deg, #0b130d, #070c08);
+  padding: 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.contract-card.ready { border-color: #5f8a52; box-shadow: inset 3px 0 0 #8fe86b; }
+.contract-card.done { opacity: .6; }
+.cc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cc-head h3 { margin: 0; font-family: var(--display); font-size: 12px; letter-spacing: .08em; color: #dfeed2; }
+.cc-reward { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: #e8c96a; }
+.cc-reward svg { width: 14px; height: 14px; }
+.contract-card p { margin: 0; font-size: 9px; letter-spacing: .08em; color: #6f8164; }
+.cc-bar { height: 4px; background: #1a2617; }
+.cc-bar i { display: block; height: 100%; background: linear-gradient(90deg, #4f9a2b, #8fe86b); transition: width .35s var(--ease-out); }
+.cc-foot { display: flex; align-items: center; justify-content: space-between; font-size: 9px; color: #7e9073; }
+
+.report-replay {
+  position: relative; margin: 2px 0 14px; overflow: hidden;
+  border: 1px solid #2a3b24; background: #060b07;
+}
+.report-replay canvas { display: block; width: 100%; height: auto; }
+.replay-bar { position: absolute; left: 0; right: 0; height: 24px; background: #000; }
+.replay-bar.top { top: 0; }
+.replay-bar.bottom { bottom: 0; }
+.replay-tag { position: absolute; left: 10px; top: 7px; font-size: 8px; letter-spacing: .22em; color: #cfe2c0; z-index: 2; }
+.replay-rate { position: absolute; right: 10px; top: 7px; font-size: 8px; letter-spacing: .2em; color: #e8c96a; z-index: 2; }
+
+.rankup {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: radial-gradient(60% 60% at 50% 50%, rgba(22, 44, 16, .86), rgba(2, 5, 3, .95));
+  animation: rankIn .4s ease both;
+}
+.rankup.out { opacity: 0; transition: .5s ease; }
+.rankup-glow {
+  position: absolute; width: 560px; height: 560px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(143, 232, 107, .3), transparent 65%);
+  animation: rankPulse 1.6s ease-out infinite;
+}
+.rankup-card { position: relative; text-align: center; }
+
+.rankup-insignia svg {
+  width: 92px; height: 92px; color: #e8c96a;
+  filter: drop-shadow(0 0 24px rgba(232, 201, 106, .5));
+  animation: rankIn .5s var(--ease-spring) both;
+}
+.rankup-card p { margin: 12px 0 2px; font-size: 9px; letter-spacing: .42em; color: #9dbb87; }
+.rankup-card h2 {
+  margin: 0; font-family: var(--display); font-size: clamp(30px, 4vw, 46px);
+  letter-spacing: .16em; color: #f2ffe6; text-shadow: 0 0 36px rgba(143, 232, 107, .45);
+}
+.rankup-card span { display: block; margin-top: 8px; font-size: 9px; letter-spacing: .24em; color: #8ea082; }
+@keyframes rankIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rankPulse { 0% { transform: scale(.72); opacity: .9; } 100% { transform: scale(1.25); opacity: 0; } }

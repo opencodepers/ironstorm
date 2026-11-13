@@ -5,6 +5,7 @@
 import {
   state, saveSettings, equipTankLocal, buyTankLocal, buyUpgradeLocal,
   buySkinLocal, equipSkinLocal, claimDailyLocal, dailyState,
+  ensureContracts, CONTRACT_DEFS, claimContractLocal, unlockRankCrateLocal,
 } from './store.js';
 import {
   TANKS, TANK_ORDER, UPGRADES, UPGRADE_ORDER, upgradeCost, deriveStats, levelProgress,
@@ -401,6 +402,9 @@ function wirePane() {
     root.querySelectorAll('[data-skin]').forEach((btn) => {
       btn.addEventListener('click', () => doSkin(btn.dataset.skin, btn));
     });
+    root.querySelectorAll('[data-contract]').forEach((btn) => {
+      btn.addEventListener('click', () => doContract(parseInt(btn.dataset.contract, 10), btn));
+    });
     document.getElementById('daily-claim')?.addEventListener('click', (e) => doDaily(e.currentTarget));
   }
 }
@@ -706,9 +710,32 @@ function renderCamo() {
   }).join('')}</div>`;
 }
 
+function renderContracts() {
+  const c = ensureContracts();
+  if (!c) return '';
+  const modeName = (MODES[c.mode] || MODES.team).name;
+  return `<div class="contract-grid">${CONTRACT_DEFS.map((d, i) => {
+    const have = Math.min(d.target, c[d.key] || 0);
+    const done = have >= d.target;
+    const claimed = (c.claimed || []).includes(i);
+    return `<article class="contract-card ${claimed ? 'done' : done ? 'ready' : ''}">
+      <div class="cc-head"><h3>${d.title}</h3><span class="cc-reward">${ICONS.coin}${fmt(d.reward)}</span></div>
+      <p>${esc(d.sub.replace('{mode}', modeName))}</p>
+      <div class="cc-bar"><i style="width:${(have / d.target) * 100}%"></i></div>
+      <div class="cc-foot"><span>${have} / ${d.target}</span>
+        ${claimed
+          ? '<button class="sc-buy done" disabled>CLAIMED</button>'
+          : done
+            ? `<button class="sc-buy" data-contract="${i}">${ICONS.coin}CLAIM</button>`
+            : '<button class="sc-buy locked" disabled>IN PROGRESS</button>'}
+      </div>
+    </article>`;
+  }).join('')}</div>`;
+}
+
 function renderSupply() {
   const d = dailyState();
-  return `<div class="daily-card">
+  return `${renderContracts()}<div class="daily-card">
     <div class="daily-crate ${d.ready ? 'ready' : ''}">${ICONS.crate}</div>
     <div class="daily-copy">
       <h3>SUPPLY DROP</h3>
@@ -742,6 +769,28 @@ async function doSkin(id, btn) {
     refreshMenu();
     rerenderPaneBody();
     toast(owned ? `${s.name} applied` : `${s.name} unlocked`, 'good');
+  } else {
+    audio.play('deny');
+    toast(res.why || 'Unavailable', 'bad');
+  }
+}
+
+async function doContract(index, btn) {
+  btn?.classList.add('busy');
+  let res;
+  if (state.mode === 'account') {
+    const r = await net.claimContract(index);
+    if (r.ok) { state.profile = fromRowLocal(r.row); res = { ok: true, reward: CONTRACT_DEFS[index].reward }; }
+    else res = { ok: false, why: r.error };
+  } else {
+    res = claimContractLocal(index);
+  }
+  btn?.classList.remove('busy');
+  if (res.ok) {
+    audio.play('buy');
+    refreshMenu();
+    rerenderPaneBody();
+    toast(`Contract complete: +${fmt(res.reward)} credits`, 'good');
   } else {
     audio.play('deny');
     toast(res.why || 'Unavailable', 'bad');
@@ -1021,6 +1070,13 @@ export function showReport(data) {
         </div>
         <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
       </div>
+      ${data.replay && data.replay.frames?.length ? `<div class="report-replay">
+        <canvas id="replay-canvas"></canvas>
+        <span class="replay-bar top"></span>
+        <span class="replay-bar bottom"></span>
+        <span class="replay-tag">FINAL MOMENT · KILL CAM</span>
+        <span class="replay-rate">0.4×</span>
+      </div>` : ''}
       <div class="report-stats">
         ${rstat('KILLS', data.kills)}
         ${rstat('DEATHS', data.deaths)}
@@ -1045,11 +1101,149 @@ export function showReport(data) {
       </div>
     </div>`;
 
-  $('#report-menu')?.addEventListener('click', () => { root.innerHTML = ''; });
+  if (data.replay) playReplay($('#replay-canvas'), data.replay);
+  if (data.levelUp) setTimeout(() => showRankUp(p.level), 260);
+
+  $('#report-menu')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
   $('#report-again')?.addEventListener('click', () => {
+    stopReplay();
     root.innerHTML = '';
     startArenaFlow();
   });
+}
+
+let replayRaf = 0;
+let replayLoop = null;
+
+function stopReplay() {
+  cancelAnimationFrame(replayRaf);
+  replayRaf = 0;
+}
+
+function playReplay(canvas, replay) {
+  stopReplay();
+  if (!canvas || !replay?.frames?.length) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = 560, H = 300;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = '100%';
+  canvas.style.height = 'auto';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const frames = replay.frames;
+  const t0 = frames[0].t;
+  const span = Math.max(0.001, frames[frames.length - 1].t - t0);
+  const scale = 0.62;
+  const focus = replay.focus || { x: (replay.size || 2600) / 2, y: (replay.size || 2600) / 2 };
+  const started = performance.now();
+
+  const draw = (now) => {
+    replayRaf = requestAnimationFrame(draw);
+    const k = (((now - started) / 1000) * 0.4) % 1;
+    const tt = t0 + k * span;
+    let idx = 0;
+    while (idx < frames.length - 1 && frames[idx + 1].t <= tt) idx += 1;
+    const f = frames[idx];
+
+    ctx.fillStyle = '#080d09';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-focus.x, -focus.y);
+
+    ctx.fillStyle = 'rgba(74, 96, 60, 0.55)';
+    ctx.fillRect(focus.x - 1000, focus.y - 1000, 2000, 2000);
+
+    for (const o of replay.obstacles) {
+      const im = img(o.type);
+      if (im) ctx.drawImage(im, o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
+    }
+
+    for (const t of f.tanks) {
+      if (!t.alive) continue;
+      const body = img(t.body);
+      const barrel = img(t.barrel);
+      if (!body) continue;
+      const sk = t.skin ? skinCss(t.skin) : 'none';
+      ctx.save();
+      ctx.translate(t.x, t.y);
+      ctx.rotate(t.a);
+      if (sk && sk !== 'none') ctx.filter = sk;
+      ctx.drawImage(body, -body.width / 2, -body.height / 2);
+      ctx.restore();
+      if (barrel) {
+        ctx.save();
+        ctx.translate(t.x, t.y);
+        ctx.rotate(t.tu);
+        if (sk && sk !== 'none') ctx.filter = sk;
+        ctx.drawImage(barrel, -barrel.width / 2, -barrel.height + body.height * 0.12);
+        ctx.restore();
+      }
+      if (t.local) {
+        ctx.strokeStyle = 'rgba(158, 245, 118, 0.9)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.radius + 18, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+  };
+  replayRaf = requestAnimationFrame(draw);
+}
+
+const RANKS = [
+  'RECRUIT', 'PRIVATE', 'CORPORAL', 'SERGEANT', 'LIEUTENANT',
+  'CAPTAIN', 'MAJOR', 'COLONEL', 'COMMANDER', 'WARLORD', 'LEGEND',
+];
+
+function rankName(level) {
+  return RANKS[Math.min(RANKS.length - 1, Math.floor((level - 1) / 2))];
+}
+
+function rankInsignia(level) {
+  const n = Math.min(4, 1 + Math.floor(level / 4));
+  const chevrons = Array.from({ length: n }, (_, i) =>
+    `<path d="M14 ${46 - i * 9} L32 ${36 - i * 9} L50 ${46 - i * 9}" stroke-linejoin="round" stroke-linecap="round"/>`).join('');
+  return `<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.4">${chevrons}</svg>`;
+}
+
+function showRankUp(level) {
+  const root = $('#modal-root');
+  if (!root) return;
+  const el = document.createElement('div');
+  el.className = 'rankup';
+  el.innerHTML = `<div class="rankup-glow"></div>
+    <div class="rankup-card">
+      <div class="rankup-insignia">${rankInsignia(level)}</div>
+      <p>PROMOTION</p>
+      <h2>${rankName(level)}</h2>
+      <span>LEVEL ${level} · SUPPLY CRATE UNLOCKED</span>
+    </div>`;
+  root.appendChild(el);
+  audio.play('rank');
+  grantRankCrate();
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 520);
+  }, 1900);
+}
+
+async function grantRankCrate() {
+  if (state.mode === 'account') {
+    const r = await net.unlockRankCrate();
+    if (r.ok && r.row) state.profile = fromRowLocal(r.row);
+  } else {
+    unlockRankCrateLocal();
+  }
+  refreshMenu();
 }
 
 function rstat(label, value) {

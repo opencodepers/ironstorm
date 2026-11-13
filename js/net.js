@@ -102,13 +102,26 @@ export async function fetchLeaderboard(metric = 'kills') {
   return { ok: true, rows: data || [] };
 }
 
-export async function recordMatch({ kills, deaths, score, won }) {
+export async function recordMatch({ kills, deaths, score, won, mode }) {
   const { data, error } = await sb.rpc('record_match', {
     p_kills: Math.round(kills),
     p_deaths: Math.round(deaths),
     p_score: Math.round(score),
     p_won: !!won,
+    p_mode: mode || 'deathmatch',
   });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, row: data };
+}
+
+export async function claimContract(index) {
+  const { data, error } = await sb.rpc('claim_contract', { p_index: index });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, row: data };
+}
+
+export async function unlockRankCrate() {
+  const { data, error } = await sb.rpc('unlock_rank_crate');
   if (error) return { ok: false, error: friendly(error.message) };
   return { ok: true, row: data };
 }

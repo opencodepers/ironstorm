@@ -283,3 +283,11 @@
 @media (prefers-reduced-motion: reduce) {
   .hud-modebar { animation: none !important; }
 }
+
+/* streak reward flash */
+#hud-streakfx { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 5; }
+#hud-streakfx.on { animation: streakFlash .6s ease-out; }
+#hud-streakfx[data-level="2"].on { background: radial-gradient(circle at 50% 58%, rgba(232, 201, 106, .16), transparent 62%); }
+#hud-streakfx[data-level="3"].on { background: radial-gradient(circle at 50% 58%, rgba(255, 150, 60, .18), transparent 62%); }
+#hud-streakfx[data-level="4"].on { background: radial-gradient(circle at 50% 58%, rgba(255, 90, 60, .22), transparent 62%); }
+@keyframes streakFlash { 0% { opacity: .95; } 100% { opacity: 0; } }

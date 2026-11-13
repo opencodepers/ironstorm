@@ -86,6 +86,18 @@ const SFX = {
   victory() { [392, 523, 659, 784].forEach((f, i) => tone(f, 0.3, { type: 'triangle', gain: 0.14, delay: i * 0.12 })); },
   buy() { tone(880, 0.07, { gain: 0.1 }); tone(1320, 0.12, { gain: 0.09, delay: 0.07 }); },
   deny() { tone(200, 0.14, { type: 'square', gain: 0.09, to: 120 }); },
+  hitmark({ pitch = 1 } = {}) {
+    tone(1180 * pitch, 0.045, { type: 'square', gain: 0.075, to: 820 * pitch });
+    noise(0.035, { gain: 0.15, freq: 5200 * pitch, q: 3 });
+  },
+  streak() {
+    tone(660, 0.12, { type: 'triangle', gain: 0.13 });
+    tone(990, 0.16, { gain: 0.1, delay: 0.06 });
+    tone(1320, 0.2, { gain: 0.07, delay: 0.12 });
+  },
+  rank() {
+    [392, 523, 659, 880, 1046].forEach((f, i) => tone(f, 0.42, { type: 'triangle', gain: 0.12, delay: i * 0.1 }));
+  },
 };
 
 export const audio = {
@@ -112,9 +124,9 @@ export const audio = {
     if (settings.music > 0.01) this.startMusic();
     else this.stopMusic();
   },
-  play(name) {
+  play(name, opts) {
     if (!ctx || settings.sfx <= 0.001) return;
-    SFX[name]?.();
+    SFX[name]?.(opts || {});
   },
 
   // ---- ambient loop -------------------------------------------------

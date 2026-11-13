@@ -113,6 +113,13 @@ export class Arena {
     this.hitstop = 0;        // brief freeze on a kill
     this.hpShown = null;     // smoothed health for the HUD bar
     this.aimS = { x: 0, y: 0 };
+    this.hitmarks = [];
+    this.hitChain = 0;
+    this.hitChainAt = 0;
+    this.replayBuf = [];
+    this.replayAcc = 0;
+    this.replay = null;
+    this.streakFxEl = null;
 
     this._bind();
   }
@@ -143,6 +150,7 @@ export class Arena {
     });
     this.me.invuln = 2.6;      // deploy shield
     this.hpShown = this.me.maxHp;
+    this.ensureStreakFx();
     this.me.spawnFx = 0.8;
     this.cam.x = this.me.x;
     this.cam.y = this.me.y;
@@ -187,6 +195,7 @@ export class Arena {
       mode: this.mode.id, modeName: this.mode.name,
       verdict: this.result?.label || null, wave: this.wave,
       teamScore: this.teamScore.slice(),
+      replay: this.replay || (this.replayBuf.length ? this.compileReplay() : null),
       accuracy: s.shots ? Math.round((s.hits / s.shots) * 100) : 0,
     };
   }
@@ -315,6 +324,7 @@ export class Arena {
   endMatch(won, label) {
     if (this.ended) return;
     this.ended = true;
+    this.replay = this.compileReplay();
     this.result = { won: !!won, label: label || (won ? 'VICTORY' : 'DEFEAT') };
     this.input.firing = false;
     this.announce(this.result.label, 2600);
@@ -898,6 +908,10 @@ export class Arena {
       f.y -= 34 * dt; f.life -= dt;
       if (f.life <= 0) this.floaters.splice(i, 1);
     }
+    for (let i = this.hitmarks.length - 1; i >= 0; i--) {
+      this.hitmarks[i].life -= dt;
+      if (this.hitmarks[i].life <= 0) this.hitmarks.splice(i, 1);
+    }
     for (let i = this.fxList.length - 1; i >= 0; i--) {
       const f = this.fxList[i];
       f.life -= dt;
@@ -923,6 +937,28 @@ export class Arena {
       const pu = this.powerups[i];
       pu.t += dt; pu.life -= dt;
       if (pu.life <= 0) { this.powerups.splice(i, 1); continue; }
+
+      // magnet: power-ups curve towards the player and leave a trail
+      if (me.alive) {
+        const dx = me.x - pu.x, dy = me.y - pu.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < 200 * 200 && d2 > 64) {
+          const d = Math.sqrt(d2);
+          const pull = (1 - d / 200) * 300;
+          pu.x += (dx / d) * pull * dt;
+          pu.y += (dy / d) * pull * dt;
+          pu.magnet = true;
+          if (Math.random() < 0.5) {
+            this.particles.push({
+              x: pu.x + rand(8, -8), y: pu.y + rand(8, -8),
+              vx: rand(30, -30), vy: rand(30, -30),
+              life: 0.45, maxLife: 0.45, size: rand(5, 2),
+              color: POWERUPS[pu.kind].color + '99',
+            });
+          }
+        }
+      }
+
       if (me.alive && dist2(me.x, me.y, pu.x, pu.y) < 42 * 42) {
         this.applyPowerup(me, pu.kind);
         this.powerups.splice(i, 1);
@@ -971,6 +1007,7 @@ export class Arena {
       });
     }
 
+    this.recordReplay(dt);
     this.updateMode(dt);
     this.updateHud();
   }
@@ -1051,7 +1088,7 @@ export class Arena {
     // and tells us through the damage channel.
     if (b.visual) return;
     const dmg = b.dmg || 14;
-    if (b.mine) this.stats.hits += 1;
+    if (b.mine) { this.stats.hits += 1; this.hitMarker(t, dmg); }
 
     if (t.remote) {
       // client-authoritative damage message; the owner applies it
@@ -1146,6 +1183,16 @@ export class Arena {
       this.stats.bestStreak = Math.max(this.stats.bestStreak, killer.streak);
       this.floater(killer.x, killer.y - 60, '+' + gain, '#8fbf5e');
       if (killer.streak >= 3) this.announce(`${killer.streak} KILL STREAK`, 1200);
+
+      if (killer.streak % 3 === 0) {
+        const labels = { 3: 'RAMPAGE', 6: 'DOMINATING', 9: 'UNSTOPPABLE', 12: 'GODLIKE' };
+        const label = labels[killer.streak] || 'ON FIRE';
+        this.medal(label, 'STREAK BONUS +150');
+        this.flashStreak(killer.streak);
+        killer.score += 150;
+        this.stats.score += 150;
+        audio.play('streak');
+      }
 
       const now = performance.now();
       this.recentKills = this.recentKills.filter((x) => now - x < 3200);
@@ -1462,7 +1509,10 @@ export class Arena {
     if (this.hud.score) this.hud.score.textContent = fmt(this.stats.score);
     if (this.hud.kills) this.hud.kills.textContent = this.stats.kills;
     if (this.hud.deaths) this.hud.deaths.textContent = this.stats.deaths;
-    if (this.hud.streak) this.hud.streak.textContent = me.streak > 1 ? 'x' + me.streak : '—';
+    if (this.hud.streak) {
+      const mult = Math.min(1 + (Math.max(me.streak, 1) - 1) * 0.25, 3);
+      this.hud.streak.textContent = me.streak > 1 ? `${me.streak} · ${mult.toFixed(2)}x` : '—';
+    }
     if (this.hud.fps) this.hud.fps.textContent = this.settings.showFps ? this.fps + ' FPS' : '';
 
     if (this.hud.respawnText) {
@@ -1586,6 +1636,7 @@ export class Arena {
     this.drawParticles(ctx);
     this.drawFx(ctx);
     this.drawFloaters(ctx);
+    this.drawHitmarks(ctx);
     if (this.settings.showNames !== false) this.drawTags(ctx);
     this.drawWorldEdge(ctx);
     ctx.restore();
@@ -1924,6 +1975,82 @@ export class Arena {
     ctx.lineWidth = 3;
     ctx.strokeRect(2, 2, WORLD.size - 4, WORLD.size - 4);
     ctx.restore();
+  }
+
+  ensureStreakFx() {
+    if (this.streakFxEl) return;
+    const hud = $('#hud');
+    if (!hud) return;
+    this.streakFxEl = document.createElement('div');
+    this.streakFxEl.id = 'hud-streakfx';
+    hud.appendChild(this.streakFxEl);
+  }
+
+  flashStreak(streak) {
+    const el = this.streakFxEl;
+    if (!el) return;
+    el.dataset.level = String(Math.min(4, Math.floor(streak / 3)));
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+    clearTimeout(this._streakFxTimer);
+    this._streakFxTimer = setTimeout(() => el.classList.remove('on'), 620);
+  }
+
+  hitMarker(t, dmg) {
+    const now = performance.now();
+    if (now - this.hitChainAt > 1100) this.hitChain = 0;
+    this.hitChainAt = now;
+    this.hitChain += 1;
+    audio.play('hitmark', { pitch: 1 + Math.min(this.hitChain, 9) * 0.07 });
+    this.hitmarks.push({ x: t.x, y: t.y, life: 0.26, max: 0.26, big: dmg > 45 });
+  }
+
+  drawHitmarks(ctx) {
+    for (const m of this.hitmarks) {
+      const k = clamp(m.life / m.max, 0, 1);
+      const s = (m.big ? 13 : 9) * (1.25 - k * 0.25);
+      ctx.save();
+      ctx.globalAlpha = k;
+      ctx.strokeStyle = m.big ? '#ffd27a' : '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(m.x - s, m.y - s); ctx.lineTo(m.x - s * 0.4, m.y - s * 0.4);
+      ctx.moveTo(m.x + s, m.y - s); ctx.lineTo(m.x + s * 0.4, m.y - s * 0.4);
+      ctx.moveTo(m.x - s, m.y + s); ctx.lineTo(m.x - s * 0.4, m.y + s * 0.4);
+      ctx.moveTo(m.x + s, m.y + s); ctx.lineTo(m.x + s * 0.4, m.y + s * 0.4);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  recordReplay(dt) {
+    if (this.ended) return;
+    this.replayAcc += dt;
+    if (this.replayAcc < 0.05) return;
+    this.replayAcc = 0;
+    this.replayBuf.push({
+      t: this.t,
+      tanks: this.tanks.map((t) => ({
+        x: Math.round(t.x), y: Math.round(t.y),
+        a: +t.angle.toFixed(3), tu: +t.turret.toFixed(3),
+        hp: Math.max(0, Math.round(t.hp)), alive: t.alive,
+        local: !!t.local, bot: !!t.bot,
+        body: t.stats.body, barrel: t.stats.barrel,
+        skin: t.skin, radius: t.stats.radius,
+      })),
+    });
+    const cutoff = this.t - 1.8;
+    while (this.replayBuf.length && this.replayBuf[0].t < cutoff) this.replayBuf.shift();
+  }
+
+  compileReplay() {
+    return {
+      frames: this.replayBuf.slice(),
+      obstacles: this.obstacles.map((o) => ({ x: o.x, y: o.y, type: o.type, w: o.w, h: o.h })),
+      focus: this.me ? { x: this.me.x, y: this.me.y } : { x: WORLD.size / 2, y: WORLD.size / 2 },
+      size: WORLD.size,
+    };
   }
 
   drawReticle(ctx) {

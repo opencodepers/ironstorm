@@ -93,3 +93,17 @@ server.mjs            dev static server
 ```
 
 Artwork: Kenney "Top-down Tanks Remastered" (CC0).
+
+## Combat feedback, contracts and promotions
+
+- **Kill cam** — the last 1.5 s of engagements is buffered during a match and replayed at 0.4× with a
+  letterbox inside the battle report.
+- **Daily contracts** — three objectives roll over every UTC day (destroy 8 in the featured warzone,
+  win 2, finish 4). Complete one and claim it from the shop's supply tab. Guests track locally;
+  signed-in players are validated by `claim_contract` on the server.
+- **Streak rewards** — every third kill escalates the announcer, fires a screen tint and raises the
+  combo multiplier shown in the HUD.
+- **Hit markers** — punchy cross markers plus an audio pitch that climbs with each consecutive hit.
+- **Rank-up cinematic** — crossing a level threshold plays a promotion overlay with the new insignia
+  and resets the supply crate via `unlock_rank_crate`.
+- **Pickup magnet** — crates and power-ups curve toward a nearby tank, leaving a short trail.

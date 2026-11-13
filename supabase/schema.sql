@@ -388,3 +388,134 @@ grant select on public.skins to anon, authenticated;
 grant execute on function public.equip_skin(text) to authenticated;
 grant execute on function public.buy_skin(text) to authenticated;
 grant execute on function public.claim_daily() to authenticated;
+
+-- ------------------------------------------------------------
+--  v3: daily contracts + rank-up supply crate
+-- ------------------------------------------------------------
+alter table public.profiles add column if not exists contracts jsonb not null
+  default '{"day": null, "mode": "team", "kills": 0, "wins": 0, "matches": 0, "claimed": []}'::jsonb;
+
+drop function if exists public.record_match(integer, integer, integer, boolean);
+
+create or replace function public.record_match(
+  p_kills  integer,
+  p_deaths integer,
+  p_score  integer,
+  p_won    boolean,
+  p_mode   text default 'deathmatch'
+)
+returns public.profiles
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me public.profiles;
+  k integer; d integer; s integer;
+  gain_credits integer;
+  gain_xp integer;
+  feat text;
+  ctr jsonb;
+begin
+  select * into me from public.profiles where id = auth.uid() for update;
+  if me.id is null then raise exception 'not authenticated'; end if;
+
+  k := least(greatest(coalesce(p_kills, 0), 0), 60);
+  d := least(greatest(coalesce(p_deaths, 0), 0), 60);
+  s := least(greatest(coalesce(p_score, 0), 0), 50000);
+
+  gain_credits := 30 + k * 14 + (case when p_won then 180 else 0 end) + (s / 25);
+  gain_xp      := 40 + k * 22 + (case when p_won then 120 else 0 end) + (s / 60);
+
+  if me.contracts is null or (me.contracts->>'day') is distinct from current_date::text then
+    feat := (array['deathmatch','team','koth','survival'])[(extract(doy from current_date)::int % 4) + 1];
+    ctr := jsonb_build_object('day', current_date::text, 'mode', feat,
+                              'kills', 0, 'wins', 0, 'matches', 0, 'claimed', '[]'::jsonb);
+  else
+    ctr := me.contracts;
+    feat := ctr->>'mode';
+  end if;
+
+  ctr := jsonb_set(ctr, '{matches}', to_jsonb(coalesce((ctr->>'matches')::int, 0) + 1), true);
+  if coalesce(p_won, false) then
+    ctr := jsonb_set(ctr, '{wins}', to_jsonb(coalesce((ctr->>'wins')::int, 0) + 1), true);
+  end if;
+  if p_mode = feat then
+    ctr := jsonb_set(ctr, '{kills}', to_jsonb(coalesce((ctr->>'kills')::int, 0) + k), true);
+  end if;
+
+  update public.profiles
+     set credits    = credits + gain_credits,
+         xp         = xp + gain_xp,
+         kills      = kills + k,
+         deaths     = deaths + d,
+         matches    = matches + 1,
+         wins       = wins + (case when p_won then 1 else 0 end),
+         best_score = greatest(best_score, s),
+         level      = public.level_for_xp(xp + gain_xp),
+         contracts  = ctr,
+         last_seen  = now()
+   where id = me.id
+   returning * into me;
+
+  insert into public.match_history (player_id, kills, deaths, score, won, credits, xp)
+  values (me.id, k, d, s, coalesce(p_won, false), gain_credits, gain_xp);
+
+  return me;
+end;
+$$;
+
+create or replace function public.claim_contract(p_index integer)
+returns public.profiles
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me public.profiles;
+  have integer; target integer; reward integer;
+begin
+  select * into me from public.profiles where id = auth.uid() for update;
+  if me.id is null then raise exception 'not authenticated'; end if;
+  if me.contracts is null or (me.contracts->>'day') is distinct from current_date::text then
+    raise exception 'contracts expired';
+  end if;
+
+  if p_index = 0 then
+    have := coalesce((me.contracts->>'kills')::int, 0); target := 8; reward := 400;
+  elsif p_index = 1 then
+    have := coalesce((me.contracts->>'wins')::int, 0); target := 2; reward := 350;
+  elsif p_index = 2 then
+    have := coalesce((me.contracts->>'matches')::int, 0); target := 4; reward := 250;
+  else
+    raise exception 'unknown contract';
+  end if;
+
+  if have < target then raise exception 'contract not complete'; end if;
+  if coalesce(me.contracts->'claimed', '[]'::jsonb) @> to_jsonb(p_index) then
+    raise exception 'already claimed';
+  end if;
+
+  update public.profiles
+     set credits = credits + reward,
+         contracts = jsonb_set(contracts, '{claimed}',
+                     coalesce(contracts->'claimed', '[]'::jsonb) || to_jsonb(p_index), true)
+   where id = me.id
+   returning * into me;
+  return me;
+end;
+$$;
+
+create or replace function public.unlock_rank_crate()
+returns public.profiles
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me public.profiles;
+begin
+  select * into me from public.profiles where id = auth.uid() for update;
+  if me.id is null then raise exception 'not authenticated'; end if;
+  update public.profiles set last_daily = null where id = me.id returning * into me;
+  return me;
+end;
+$$;
+
+grant execute on function public.record_match(integer, integer, integer, boolean, text) to authenticated;
+grant execute on function public.claim_contract(integer) to authenticated;
+grant execute on function public.unlock_rank_crate() to authenticated;
