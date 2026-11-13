@@ -96,8 +96,8 @@ Artwork: Kenney "Top-down Tanks Remastered" (CC0).
 
 ## Combat feedback, contracts and promotions
 
-- **Kill cam** — the last 1.5 s of engagements is buffered during a match and replayed at 0.4× with a
-  letterbox inside the battle report.
+- **Kill cam** — the last 1.5 s of engagements is buffered during a match and replayed as a slowed
+  one-shot cinematic with a letterbox, progress bar and replay/skip controls inside the battle report.
 - **Daily contracts** — three objectives roll over every UTC day (destroy 8 in the featured warzone,
   win 2, finish 4). Complete one and claim it from the shop's supply tab. Guests track locally;
   signed-in players are validated by `claim_contract` on the server.
@@ -107,3 +107,17 @@ Artwork: Kenney "Top-down Tanks Remastered" (CC0).
 - **Rank-up cinematic** — crossing a level threshold plays a promotion overlay with the new insignia
   and resets the supply crate via `unlock_rank_crate`.
 - **Pickup magnet** — crates and power-ups curve toward a nearby tank, leaving a short trail.
+
+## Deploy cinematic, unlock paths, squads and spectating
+
+- **Deploy cinematic** — every match opens with a 3.1 s deploy sequence: letterbox bars, the warzone
+  name, map and weather, and a progress line before the HUD fades in. The match clock starts when the
+  cinematic ends, and it is skipped entirely when the player prefers reduced motion.
+- **Unlock paths** — the garage opens with a next-requisition banner for the nearest locked vehicle
+  and camo, and every locked card shows an XP bar with the exact XP needed for its level. The shop
+  shows the same distance on each locked vehicle.
+- **Squad codes** — the SQUAD pane issues a four-character code with copy-invite-link, join-by-code
+  and a recent-squadmates list. `?squad=ABCD` joins automatically, and squadmates carry a ◆ over
+  their hull in the live arena. Codes are shared out of band; the arena is still one global battle.
+- **Spectating** — when your vehicle is destroyed the camera follows a living tank with a SPECTATING
+  bar, and A/D cycles targets until you redeploy.

@@ -184,6 +184,7 @@ export function connectArena(handlers = {}) {
     tank: p.tank,
     level: p.level,
     guest: isGuest,
+    squad: state.settings.squad || '',
   };
 
   channel

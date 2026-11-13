@@ -4,7 +4,7 @@
 
 import { img } from './assets.js';
 import { audio } from './audio.js';
-import { state } from './store.js';
+import { state, noteSquadmate } from './store.js';
 import { connectArena } from './net.js';
 import { TANKS, TANK_ORDER, deriveStats, skinCss } from './tanks.js';
 import { modeFor } from './modes.js';
@@ -37,6 +37,12 @@ const SPAWNS = [
 ];
 
 const TANK_FWD = (a) => ({ x: Math.sin(a), y: -Math.cos(a) });
+
+const INTRO_DUR = 3.1;
+const MAPS = [
+  'ASHFORD RIDGE', 'SECTOR 7 BLACKSITE', 'KURSK LINE', 'DUNE BASIN',
+  'FROZEN CROSSING', 'RUINED FOUNDRY', 'RED VALLEY', 'OUTPOST 12',
+];
 
 export class Arena {
   constructor({ onExit, onReport, mode = 'deathmatch' } = {}) {
@@ -77,6 +83,7 @@ export class Arena {
       mode: $('#hud-mode'), objective: $('#hud-objective'),
       objectiveLabel: $('#hud-objective-label'), remaining: $('#hud-remaining'),
       modebar: $('#hud-modebar'), medals: $('#hud-medals'), lives: $('#hud-lives'),
+      spectate: $('#hud-spectate'), spectateName: $('#hud-spectate-name'),
     };
 
     this.running = false;
@@ -121,6 +128,10 @@ export class Arena {
     this.replay = null;
     this.lastBlood = null;
     this.streakFxEl = null;
+    this.introT = INTRO_DUR;
+    this.introScale = 1;
+    this.mapName = pick(MAPS);
+    this.spectateIdx = 0;
 
     this._bind();
   }
@@ -167,10 +178,15 @@ export class Arena {
 
     this.running = true;
     this.startAt = performance.now() + 1;
+    this.mapName = pick(MAPS);
+    this.spectateIdx = 0;
+    // The deploy cinematic holds the match clock and input until it ends.
+    this.introT = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? INTRO_DUR : 0;
+    this.introScale = this.introT >= INTRO_DUR ? 1 : 0.86;
+    $('#hud')?.classList.toggle('intro', this.introT < INTRO_DUR);
+    if (this.introT < INTRO_DUR) audio.play('reload');
     this.lastFrame = performance.now();
     this.animate(this.lastFrame);
-    this.announce('BATTLE START', 1600);
-    audio.play('levelup');
   }
 
   stop() {
@@ -328,6 +344,7 @@ export class Arena {
     this.replay = this.compileReplay();
     this.result = { won: !!won, label: label || (won ? 'VICTORY' : 'DEFEAT') };
     this.input.firing = false;
+    this.hud.spectate?.classList.add('hidden');
     this.announce(this.result.label, 2600);
     this.medal(this.result.label, 'MATCH COMPLETE');
     audio.play(won ? 'victory' : 'death');
@@ -557,8 +574,7 @@ export class Arena {
     if (!uid || uid === state.uid) return;
     let t = this.remotes.get(uid);
     if (t) return;
-    const stats = deriveStats(meta.tank || 'sherman', {});
-    const spot = this.freeSpot(300);
+    const stats = deriveStats(meta.tank || 'sherman', {});      const spot = this.freeSpot(300);
     t = this.makeTank({
       uid, name: meta.name || 'UNKNOWN', stats,
       level: meta.level || 1, remote: true,
@@ -568,6 +584,9 @@ export class Arena {
       x: spot.x, y: spot.y,
     });
     t.tx = t.x; t.ty = t.y;
+    t.squad = meta.squad || '';
+    t.ally = !!t.squad && t.squad === (this.settings?.squad || state.settings.squad || '');
+    if (t.ally) noteSquadmate(t.name);
     this.remotes.set(uid, t);
     this.tanks.push(t);
   }
@@ -645,6 +664,9 @@ export class Arena {
       }
       const k = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', ' ', 'tab', 'shift', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+      if (this.me && !this.me.alive && !this.ended && (k === 'a' || k === 'd')) {
+        this.cycleSpectate(k === 'd' ? 1 : -1);
+      }
       this.input.keys.add(k);
       if (k === 'escape') this.togglePause();
       if (k === 'enter') this.openChat();
@@ -773,6 +795,11 @@ export class Arena {
 
   update(dt) {
     const me = this.me;
+
+    if (this.introT < INTRO_DUR) {
+      this.updateIntro(dt);
+      return;
+    }
 
     // game feel: a short freeze on kills, and slow motion while the match ends
     if (this.hitstop > 0) {
@@ -995,6 +1022,17 @@ export class Arena {
       const lead = Math.min(150, d * 0.2);
       this.cam.x = lerp(this.cam.x, me.x + (dx / d) * lead, clamp(dt * 5.5, 0, 1));
       this.cam.y = lerp(this.cam.y, me.y + (dy / d) * lead, clamp(dt * 5.5, 0, 1));
+    } else if (!this.ended) {
+      // spectator: ride along with whoever is still fighting
+      const list = this.spectateTargets();
+      if (list.length) {
+        const t = list[(this.spectateIdx || 0) % list.length];
+        this.cam.x = lerp(this.cam.x, t.x, clamp(dt * 3.4, 0, 1));
+        this.cam.y = lerp(this.cam.y, t.y, clamp(dt * 3.4, 0, 1));
+        if (this.hud.spectateName && this.hud.spectateName.textContent !== t.name) {
+          this.hud.spectateName.textContent = t.name;
+        }
+      }
     }
     this.clampCamera();
     this.shake = Math.max(0, this.shake - dt * 34);
@@ -1153,6 +1191,7 @@ export class Arena {
     if (t.local) {
       this.stats.deaths++;
       this.hud.respawn?.classList.remove('hidden');
+      this.beginSpectate();
       t.respawnT = 3.2;
       this.shake = 16 * this.settings.shake;
       t.vx = t.vy = 0;
@@ -1223,6 +1262,7 @@ export class Arena {
     this.shake = 16 * this.settings.shake;
     me.respawnT = 3.2;
     this.hud.respawn?.classList.remove('hidden');
+    this.beginSpectate();
     if (this.mode.waves) {
       this.lives -= 1;
       if (this.lives <= 0) this.endMatch(false, 'OVERRUN');
@@ -1251,6 +1291,8 @@ export class Arena {
     t.reloadT = this.t + 0.4;
     if (t.local) {
       this.hud.respawn?.classList.add('hidden');
+      this.hud.spectate?.classList.add('hidden');
+      this.spectateIdx = 0;
       this.cam.x = t.x; this.cam.y = t.y;
       this.announce('RESPAWNED', 900);
     }
@@ -1599,7 +1641,7 @@ export class Arena {
   render(dt) {
     const ctx = this.ctx;
     const { vw, vh, dpr } = this;
-    const zoom = this.zoom * (1 + this.punch);
+    const zoom = this.zoom * (1 + this.punch) * this.introScale;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, vw, vh);
 
@@ -1649,8 +1691,108 @@ export class Arena {
 
     this.drawVignette(ctx);
     this.drawWeather(ctx);
-    if (this.me && this.me.alive && !this.paused) this.drawReticle(ctx);
+    if (this.me && this.me.alive && !this.paused && this.introT >= INTRO_DUR) this.drawReticle(ctx);
     if (this.me && !this.me.alive) this.drawDeathOverlay(ctx);
+    if (this.introT < INTRO_DUR) this.drawIntro(ctx);
+  }
+
+  // ----------------------------------------------------------------
+  //  deploy cinematic, spectator camera
+  // ----------------------------------------------------------------
+  updateIntro(dt) {
+    this.introT += dt;
+    const p = clamp(this.introT / INTRO_DUR, 0, 1);
+    const e = 1 - Math.pow(1 - p, 2);
+    this.introScale = 0.86 + 0.14 * e;
+    this.cam.x = lerp(this.cam.x, WORLD.size / 2, clamp(dt * 0.45, 0, 1));
+    this.cam.y = lerp(this.cam.y, WORLD.size / 2, clamp(dt * 0.45, 0, 1));
+    if (this.introT >= INTRO_DUR) this.endIntro();
+  }
+
+  endIntro() {
+    this.introT = INTRO_DUR;
+    this.introScale = 1;
+    this.matchLen += INTRO_DUR;   // the deploy sequence does not eat the clock
+    this.startAt = performance.now();
+    $('#hud')?.classList.remove('intro');
+    this.announce('BATTLE START', 1700);
+    audio.play('levelup');
+  }
+
+  drawIntro(ctx) {
+    const { vw, vh } = this;
+    const p = clamp(this.introT / INTRO_DUR, 0, 1);
+    const rise = 1 - Math.pow(1 - Math.min(1, p / 0.3), 3);
+    const out = clamp((p - 0.84) / 0.16, 0, 1);
+    const fade = 1 - out;
+    const cx = vw / 2;
+
+    ctx.save();
+    ctx.fillStyle = `rgba(3, 6, 4, ${0.66 * fade})`;
+    ctx.fillRect(0, 0, vw, vh);
+
+    const bar = vh * 0.11 * rise;
+    ctx.fillStyle = '#020403';
+    ctx.fillRect(0, 0, vw, bar);
+    ctx.fillRect(0, vh - bar, vw, bar);
+    ctx.fillStyle = 'rgba(143, 232, 107, 0.45)';
+    ctx.fillRect(0, bar, vw, 1);
+    ctx.fillRect(0, vh - bar - 1, vw, 1);
+
+    ctx.globalAlpha = fade;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#7f9074';
+    ctx.font = '500 12px "Share Tech Mono", monospace';
+    ctx.letterSpacing = '5px';
+    ctx.fillText('OPERATION IRONSTORM', cx, vh * 0.34 - (1 - rise) * 14);
+
+    ctx.fillStyle = '#eaf7de';
+    ctx.font = `700 ${Math.round(clamp(vh * 0.062, 30, 62))}px "Oxanium", sans-serif`;
+    ctx.letterSpacing = '4px';
+    ctx.fillText(this.mode.name, cx, vh * 0.42 - (1 - rise) * 10);
+
+    ctx.fillStyle = '#8fe86b';
+    ctx.font = '500 13px "Share Tech Mono", monospace';
+    ctx.letterSpacing = '3px';
+    ctx.fillText(this.mode.rules, cx, vh * 0.485);
+
+    ctx.fillStyle = '#6f8065';
+    ctx.font = '400 11px "Share Tech Mono", monospace';
+    ctx.letterSpacing = '2px';
+    ctx.fillText(`${this.mapName}  ·  ${this.weather.toUpperCase()}`, cx, vh * 0.525);
+
+    const w = Math.min(vw * 0.34, 420);
+    const y = vh * 0.75;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.fillRect(cx - w / 2, y, w, 2);
+    ctx.fillStyle = '#8fe86b';
+    ctx.fillRect(cx - w / 2, y, w * p, 2);
+    ctx.fillStyle = '#5c6a55';
+    ctx.font = '400 10px "Share Tech Mono", monospace';
+    ctx.letterSpacing = '4px';
+    ctx.fillText(p < 0.84 ? 'DEPLOYING' : 'ENGAGE', cx, y + 22);
+    ctx.restore();
+  }
+
+  spectateTargets() {
+    return this.tanks.filter((t) => t.alive && t !== this.me);
+  }
+
+  beginSpectate() {
+    this.spectateIdx = 0;
+    const list = this.spectateTargets();
+    if (!this.hud.spectate) return;
+    this.hud.spectate.classList.toggle('hidden', list.length === 0);
+    if (this.hud.spectateName && list[0]) this.hud.spectateName.textContent = list[0].name;
+  }
+
+  cycleSpectate(dir = 1) {
+    const list = this.spectateTargets();
+    if (!list.length) return;
+    this.spectateIdx = ((this.spectateIdx || 0) + dir + list.length) % list.length;
+    if (this.hud.spectateName) this.hud.spectateName.textContent = list[this.spectateIdx].name;
+    audio.play('ui');
   }
 
   drawGround(ctx) {
@@ -1903,10 +2045,11 @@ export class Arena {
       const y = t.y - (t.stats.radius || 30) - 40;
       ctx.font = 'bold 12px "Courier New", monospace';
       ctx.fillStyle = t.local ? '#d8f0c0'
+        : t.ally ? '#b6f79a'
         : this.mode.teams ? (t.team === 0 ? '#a8e88a' : '#e68e78')
         : t.remote ? '#9ee0ff' : '#e2d7bf';
       ctx.globalAlpha = 0.95;
-      const label = t.local ? t.name + ' (YOU)' : t.name;
+      const label = t.local ? t.name + ' (YOU)' : t.ally ? '◆ ' + t.name : t.name;
       ctx.fillText(label, t.x, y);
       if (t.local) {
         ctx.beginPath();

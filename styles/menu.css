@@ -1006,3 +1006,80 @@ input[type=range]::-moz-range-thumb {
 .rankup-bar { width: 230px; height: 3px; margin: 8px auto 0; background: #1a2617; }
 .rankup-bar i { display: block; height: 100%; background: linear-gradient(90deg, #4f9a2b, #8fe86b); }
 .rankup-card small { display: block; margin-top: 12px; font-size: 8px; letter-spacing: .3em; color: #5f7355; }
+
+/* ==================================================================
+   Progression — next requisition banner + per-tank unlock paths
+   ================================================================== */
+.garage-next {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 16px; margin-bottom: 16px;
+  background: linear-gradient(90deg, rgba(30, 50, 24, .55), rgba(10, 18, 11, .35));
+  border: 1px solid rgba(90, 140, 70, .35);
+  border-left: 2px solid #8fe86b;
+}
+.gn-label { font-size: 8.5px; letter-spacing: .22em; color: #8fe86b; }
+.gn-item {
+  flex: 1; display: grid; grid-template-columns: 68px 1fr auto;
+  grid-template-areas: "kind name lvl" "bar bar bar";
+  align-items: center; gap: 2px 10px; min-width: 0;
+}
+@media (min-width: 700px) {
+  .garage-next { flex-direction: row; align-items: flex-end; gap: 26px; }
+  .gn-label { align-self: center; max-width: 90px; line-height: 1.5; }
+  .gn-item { min-width: 260px; }
+}
+.gn-kind { grid-area: kind; font-size: 8px; letter-spacing: .16em; color: #6f8065; }
+.gn-item b {
+  grid-area: name; font-size: 12px; letter-spacing: .1em; color: #dcebd0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gn-item i { grid-area: lvl; font-style: normal; font-size: 8.5px; letter-spacing: .12em; color: #b8923f; }
+.gn-bar { grid-area: bar; height: 3px; background: rgba(255, 255, 255, .07); margin-top: 6px; }
+.gn-bar em { display: block; height: 100%; background: linear-gradient(90deg, #4d8f34, #8fe86b); }
+
+.tc-unlock { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.tc-unlock .tu-bar { height: 3px; background: rgba(255, 255, 255, .07); }
+.tc-unlock .tu-bar i { display: block; height: 100%; background: #7d9a68; }
+.tc-unlock span { font-size: 8px; letter-spacing: .14em; color: #6f8065; }
+
+/* ==================================================================
+   Squad pane
+   ================================================================== */
+.squad-hero { display: flex; gap: 26px; align-items: stretch; margin-bottom: 22px; }
+.squad-code {
+  min-width: 220px; display: flex; flex-direction: column; justify-content: center;
+  align-items: center; gap: 8px; padding: 22px 26px;
+  background: radial-gradient(60% 60% at 50% 40%, rgba(120, 200, 90, .14), transparent 75%), #0a110b;
+  border: 1px solid #35492c;
+}
+.squad-code span { font-size: 8px; letter-spacing: .3em; color: #6f8065; }
+.squad-code b {
+  font-family: var(--display); font-size: 46px; letter-spacing: .22em;
+  color: #eaf7de; text-shadow: 0 0 30px rgba(143, 232, 107, .45);
+}
+.squad-copy { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+.squad-copy h3 { margin: 0; font-family: var(--display); font-size: 15px; letter-spacing: .18em; color: #dfeed2; }
+.squad-copy p { margin: 0; max-width: 56ch; font-size: 11px; line-height: 1.65; color: #8b9c81; }
+.squad-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+.squad-join { display: flex; align-items: flex-end; gap: 12px; max-width: 420px; }
+.squad-join .field { flex: 1; }
+.squad-join input { text-transform: uppercase; letter-spacing: .3em; }
+.squad-link { color: #a9c497; letter-spacing: .04em; }
+.squad-roster {
+  margin-top: 22px; padding: 14px 16px;
+  border: 1px solid #2a3a24; background: rgba(8, 14, 9, .5);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.squad-roster > b { font-size: 8.5px; letter-spacing: .22em; color: #7f9074; }
+.squad-mates { display: flex; flex-wrap: wrap; gap: 8px; }
+.squad-mate {
+  font-size: 10px; letter-spacing: .12em; color: #b6f79a;
+  border: 1px solid #3f5c33; padding: 4px 10px; background: rgba(40, 70, 30, .25);
+}
+.squad-empty { font-size: 10.5px; color: #6d7c66; }
+
+@media (max-width: 760px) {
+  .squad-hero { flex-direction: column; gap: 14px; }
+  .squad-code { min-width: 0; }
+}

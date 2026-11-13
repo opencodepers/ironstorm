@@ -4,7 +4,7 @@
 
 import { loadAll, assetState } from './assets.js';
 import { audio } from './audio.js';
-import { state, startGuest, startAccount, loadSettings, fromRow, applyMatchRewards } from './store.js';
+import { state, startGuest, startAccount, loadSettings, fromRow, applyMatchRewards, setSquad } from './store.js';
 import * as net from './net.js';
 import { Arena } from './game.js';
 import {
@@ -33,6 +33,13 @@ function showMenu() {
 async function boot() {
   loadSettings();
   audio.set(state.settings);
+
+  // ?squad=ABCD — an invite link drops you straight into that squad.
+  const invited = new URLSearchParams(location.search).get('squad');
+  if (invited && setSquad(invited)) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    setTimeout(() => toast(`Squad ${state.settings.squad} joined`, 'good'), 900);
+  }
   const unlock = () => { audio.init(); audio.set(state.settings); window.removeEventListener('pointerdown', unlock); };
   window.addEventListener('pointerdown', unlock);
   window.addEventListener('keydown', unlock, { once: true });

@@ -252,3 +252,48 @@ export function unlockRankCrateLocal() {
   state.profile.lastDaily = 0;
   save();
 }
+
+// ----------------------------------------------------------------
+//  Squads — a four-character code shared out of band. Everyone who
+//  carries the same code is tagged as an ally in the live arena.
+// ----------------------------------------------------------------
+const SQUAD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SQUADMATES_KEY = 'ironstorm.squadmates.v1';
+
+export const validSquad = (code) => /^[A-Z0-9]{4}$/.test(String(code || '').toUpperCase());
+
+function randomSquad() {
+  let out = '';
+  for (let i = 0; i < 4; i++) out += SQUAD_ALPHABET[Math.floor(Math.random() * SQUAD_ALPHABET.length)];
+  return out;
+}
+
+export function ensureSquad() {
+  if (!state.settings.squad) saveSettings({ squad: randomSquad() });
+  return state.settings.squad;
+}
+
+export function setSquad(code) {
+  const next = String(code || '').trim().toUpperCase();
+  if (!validSquad(next)) return null;
+  saveSettings({ squad: next });
+  return next;
+}
+
+export function rotateSquad() {
+  const code = randomSquad();
+  saveSettings({ squad: code });
+  return code;
+}
+
+export function squadmates() {
+  const list = storage.get(SQUADMATES_KEY, []);
+  return Array.isArray(list) ? list : [];
+}
+
+export function noteSquadmate(name) {
+  if (!name) return;
+  const list = squadmates().filter((n) => n !== name);
+  list.unshift(name);
+  storage.set(SQUADMATES_KEY, list.slice(0, 8));
+}

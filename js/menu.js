@@ -6,10 +6,11 @@ import {
   state, saveSettings, equipTankLocal, buyTankLocal, buyUpgradeLocal,
   buySkinLocal, equipSkinLocal, claimDailyLocal, dailyState,
   ensureContracts, CONTRACT_DEFS, claimContractLocal, unlockRankCrateLocal,
+  ensureSquad, setSquad, rotateSquad, squadmates,
 } from './store.js';
 import {
   TANKS, TANK_ORDER, UPGRADES, UPGRADE_ORDER, upgradeCost, deriveStats, levelProgress,
-  SKINS, SKIN_ORDER, skinCss, skinFor,
+  SKINS, SKIN_ORDER, skinCss, skinFor, xpForLevel,
 } from './tanks.js';
 import { MODES, MODE_ORDER } from './modes.js';
 import { selectedMode, setMode } from './landing.js';
@@ -39,6 +40,7 @@ export const ICONS = {
   back: svg('<path d="M14.5 5 7.5 12l7 7"/><path d="M8 12h11"/>'),
   coin: `<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="6.4" ry="8.6" fill="#c9a227"/><ellipse cx="12" cy="12" rx="6.4" ry="8.6" fill="none" stroke="#f0d67a" stroke-width="1.2"/><ellipse cx="12" cy="12" rx="4" ry="6" fill="none" stroke="#8f6f14" stroke-width="1"/><path d="M12 8.2c-2 0-3 .9-3 2s1 1.7 3 2.1 3 1 3 2.1-1 2-3 2" fill="none" stroke="#f7e6a6" stroke-width="1.5"/></svg>`,
   user: svg('<circle cx="12" cy="8.2" r="3.6"/><path d="M4.8 20.2c1.3-3.6 4-5.4 7.2-5.4s5.9 1.8 7.2 5.4"/>'),
+  squad: svg('<circle cx="9" cy="8.4" r="3.1"/><path d="M3.4 19.8c1-3.1 3.2-4.7 5.6-4.7s4.6 1.6 5.6 4.7"/><circle cx="17" cy="9.6" r="2.3"/><path d="M15.6 15.5c1.8.3 3.3 1.7 4.1 4.3"/>'),
   skull: svg('<path d="M12 3a7 7 0 0 0-4.2 12.6V19h8.4v-3.4A7 7 0 0 0 12 3z"/><circle cx="9.2" cy="11" r="1.4" fill="currentColor" stroke="none"/><circle cx="14.8" cy="11" r="1.4" fill="currentColor" stroke="none"/><path d="M9.6 19v2M14.4 19v2"/>'),
   target: svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>'),
   cart: svg('<path d="M2.6 4.2h2.6l2.5 10.4h9.4l2.1-7.4H7"/><circle cx="9.4" cy="19" r="1.5"/><circle cx="17.4" cy="19" r="1.5"/>'),
@@ -56,6 +58,7 @@ const PANE_META = {
   upgrades: { title: 'UPGRADES', sub: 'Spend credits on permanent hull improvements' },
   garage: { title: 'GARAGE', sub: 'Select and requisition armoured vehicles' },
   shop: { title: 'SHOP', sub: 'Vehicles, camouflage patterns and daily supply drops' },
+  squad: { title: 'SQUAD', sub: 'Form up and roll into the same arena' },
   leaderboards: { title: 'LEADERBOARDS', sub: 'Global rankings of the Iron Corps' },
   gameplay: { title: 'GAMEPLAY', sub: 'Audio, controls and account settings' },
 };
@@ -337,6 +340,7 @@ function renderPane() {
     leaderboards: renderLeaderboards,
     gameplay: renderGameplay,
     shop: renderShop,
+    squad: renderSquad,
   }[currentPane]?.() ?? '';
 
   root.innerHTML = `
@@ -408,6 +412,42 @@ function wirePane() {
     $('#claim-all')?.addEventListener('click', (e) => doClaimAll(e.currentTarget));
     document.getElementById('daily-claim')?.addEventListener('click', (e) => doDaily(e.currentTarget));
   }
+  if (currentPane === 'squad') {
+    const code = ensureSquad();
+    $('#squad-copy')?.addEventListener('click', async () => {
+      const link = `${location.origin}${location.pathname}?squad=${code}`;
+      try {
+        await navigator.clipboard.writeText(link);
+        audio.play('buy');
+        toast('Invite link copied', 'good');
+      } catch {
+        toast(link, 'info');
+      }
+    });
+    $('#squad-new')?.addEventListener('click', () => {
+      const next = rotateSquad();
+      audio.play('buy');
+      toast(`New squad code: ${next}`, 'good');
+      rerenderPaneBody();
+    });
+    const join = () => {
+      const v = ($('#squad-input')?.value || '').trim().toUpperCase();
+      const ok = setSquad(v);
+      if (!ok) {
+        audio.play('deny');
+        toast('Squad codes are 4 letters or numbers', 'bad');
+        return;
+      }
+      audio.play('buy');
+      toast(`Joined squad ${ok}`, 'good');
+      rerenderPaneBody();
+    };
+    $('#squad-join')?.addEventListener('click', join);
+    $('#squad-input')?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') join();
+    });
+  }
 }
 
 function rerenderPaneBody() {
@@ -418,6 +458,7 @@ function rerenderPaneBody() {
     leaderboards: renderLeaderboards,
     gameplay: renderGameplay,
     shop: renderShop,
+    squad: renderSquad,
   }[currentPane]?.() ?? '';
   const holder = root.querySelector('.pane-body');
   if (holder) holder.innerHTML = body;
@@ -481,7 +522,7 @@ async function doUpgrade(key, btn) {
 // ---- garage ------------------------------------------------------
 function renderGarage() {
   const p = state.profile;
-  return `<div class="garage-grid">${TANK_ORDER.map((id) => {
+  return `${renderNextUnlock(p)}<div class="garage-grid">${TANK_ORDER.map((id) => {
     const t = TANKS[id];
     const owned = p.owned.includes(id);
     const equipped = p.tank === id;
@@ -512,6 +553,7 @@ function renderGarage() {
           ${statRow('SPD', stats.speed / 220, '#8fbf5e')}
         </div>
         ${btn}
+        ${!owned && locked ? unlockRow(p, t.unlock) : ''}
       </div>
     </article>`;
   }).join('')}</div>`;
@@ -520,6 +562,52 @@ function renderGarage() {
 function statRow(label, pct, color) {
   return `<div class="tc-stat"><span>${label}</span>
     <i><b style="width:${clamp(pct * 100, 6, 100)}%;background:${color}"></b></i></div>`;
+}
+
+// ---- unlock paths ------------------------------------------------
+function unlockInfo(p, lvl) {
+  if (p.level >= lvl) return { ready: true, pct: 1, need: 0 };
+  const start = xpForLevel(p.level);
+  const end = xpForLevel(lvl);
+  return {
+    ready: false,
+    pct: clamp((p.xp - start) / Math.max(1, end - start), 0, 1),
+    need: Math.max(0, end - p.xp),
+  };
+}
+
+function unlockRow(p, lvl) {
+  const info = unlockInfo(p, lvl);
+  return `<div class="tc-unlock">
+    <div class="tu-bar"><i style="width:${Math.round(info.pct * 100)}%"></i></div>
+    <span>${fmt(info.need)} XP TO LVL ${lvl}</span>
+  </div>`;
+}
+
+function renderNextUnlock(p) {
+  const nextTank = TANK_ORDER.map((id) => TANKS[id])
+    .filter((t) => !p.owned.includes(t.id) && t.unlock > p.level)
+    .sort((a, b) => a.unlock - b.unlock)[0];
+  const nextSkin = SKIN_ORDER.map((id) => SKINS[id])
+    .filter((s) => !p.ownedSkins.includes(s.id) && s.unlock > p.level)
+    .sort((a, b) => a.unlock - b.unlock)[0];
+  if (!nextTank && !nextSkin) return '';
+  const item = (kind, name, lvl) => {
+    const i = unlockInfo(p, lvl);
+    return `<div class="gn-item">
+      <span class="gn-kind">${kind}</span>
+      <b>${esc(name)}</b>
+      <i>LVL ${lvl} · ${fmt(i.need)} XP</i>
+      <div class="gn-bar"><em style="width:${Math.round(i.pct * 100)}%"></em></div>
+    </div>`;
+  };
+  const parts = [];
+  if (nextTank) parts.push(item('VEHICLE', nextTank.name, nextTank.unlock));
+  if (nextSkin) parts.push(item('CAMO', nextSkin.name, nextSkin.unlock));
+  return `<div class="garage-next">
+    <span class="gn-label">NEXT REQUISITION</span>
+    ${parts.join('')}
+  </div>`;
 }
 
 function paintGaragePreviews() {
@@ -677,7 +765,7 @@ function renderShopVehicles() {
       <div class="sc-swatch"><canvas data-tank-preview="${id}" width="264" height="156"></canvas></div>
       <p class="sc-blurb">${t.blurb}</p>
       <div class="sc-foot">
-        <span class="sc-note">${owned ? 'IN INVENTORY' : locked ? 'REQUIRES LEVEL ' + t.unlock : fmt(price) + ' CR'}</span>
+        <span class="sc-note">${owned ? 'IN INVENTORY' : locked ? 'LVL ' + t.unlock + ' · ' + fmt(unlockInfo(p, t.unlock).need) + ' XP' : fmt(price) + ' CR'}</span>
         ${btn}
       </div>
     </article>`;
@@ -763,6 +851,40 @@ function renderSupply() {
       ${ICONS.crate}<span>${d.ready ? 'OPEN' : 'LOCKED'}</span>
     </button>
   </div>`;
+}
+
+// ---- squad -------------------------------------------------------
+function renderSquad() {
+  const code = ensureSquad();
+  const mates = squadmates();
+  const link = `${location.origin}${location.pathname}?squad=${code}`;
+  return `<div class="squad-hero">
+      <div class="squad-code">
+        <span>SQUAD CODE</span>
+        <b id="squad-code">${code}</b>
+      </div>
+      <div class="squad-copy">
+        <h3>ROLL WITH YOUR SQUAD</h3>
+        <p>Squadmates carry a green diamond over their hull in the arena and drop into the same global battle. Share the code or send the invite link.</p>
+        <div class="squad-actions">
+          <button class="btn" id="squad-copy">COPY INVITE LINK</button>
+          <button class="btn btn-ghost" id="squad-new">NEW CODE</button>
+        </div>
+      </div>
+    </div>
+    <div class="squad-join">
+      <label class="field"><span>JOIN A SQUAD</span>
+        <input id="squad-input" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" />
+      </label>
+      <button class="btn" id="squad-join">JOIN</button>
+    </div>
+    <p class="pane-note">Invite link — <b class="squad-link">${esc(link)}</b></p>
+    <div class="squad-roster">
+      <b>RECENT SQUADMATES</b>
+      <div class="squad-mates">${mates.length
+        ? mates.map((n) => `<span class="squad-mate">◆ ${esc(n)}</span>`).join('')
+        : '<span class="squad-empty">No squadmates sighted yet — share the link to roll together.</span>'}</div>
+    </div>`;
 }
 
 async function doSkin(id, btn) {
