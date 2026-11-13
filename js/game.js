@@ -119,6 +119,7 @@ export class Arena {
     this.replayBuf = [];
     this.replayAcc = 0;
     this.replay = null;
+    this.lastBlood = null;
     this.streakFxEl = null;
 
     this._bind();
@@ -948,6 +949,9 @@ export class Arena {
           pu.x += (dx / d) * pull * dt;
           pu.y += (dy / d) * pull * dt;
           pu.magnet = true;
+          pu.trail = pu.trail || [];
+          pu.trail.push({ x: pu.x, y: pu.y });
+          if (pu.trail.length > 12) pu.trail.shift();
           if (Math.random() < 0.5) {
             this.particles.push({
               x: pu.x + rand(8, -8), y: pu.y + rand(8, -8),
@@ -1088,7 +1092,7 @@ export class Arena {
     // and tells us through the damage channel.
     if (b.visual) return;
     const dmg = b.dmg || 14;
-    if (b.mine) { this.stats.hits += 1; this.hitMarker(t, dmg); }
+    if (b.mine) { this.stats.hits += 1; this.hitMarker(t, dmg, t.hp - dmg <= 0); }
 
     if (t.remote) {
       // client-authoritative damage message; the owner applies it
@@ -1140,6 +1144,7 @@ export class Arena {
     t.hp = 0;
     t.deaths++;
     t.streak = 0;
+    this.lastBlood = { victim: t.name, by: from?.name || 'YOU' };
     this.explodeAt(t.x, t.y, 1.2);
     audio.play('death');
     this.punch = Math.max(this.punch, t.local ? 0.05 : 0.016);
@@ -1209,6 +1214,7 @@ export class Arena {
     me.hp = 0;
     me.deaths++;
     me.streak = 0;
+    this.lastBlood = { victim: 'YOU', by: killerName || 'ENEMY' };
     this.stats.deaths++;
     this.explodeAt(me.x, me.y, 1.2);
     audio.play('death');
@@ -1732,6 +1738,17 @@ export class Arena {
   drawPowerup(ctx, p) {
     const pu = POWERUPS[p.kind];
     const bob = Math.sin(p.t * 2.4) * 4;
+    if (p.trail && p.trail.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = pu.color + '55';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(p.trail[0].x, p.trail[0].y);
+      for (let i = 1; i < p.trail.length; i += 1) ctx.lineTo(p.trail[i].x, p.trail[i].y);
+      ctx.stroke();
+      ctx.restore();
+    }
     ctx.save();
     ctx.translate(p.x, p.y + bob);
     ctx.globalAlpha = p.life < 4 ? 0.4 + Math.sin(p.t * 14) * 0.3 : 1;
@@ -1997,29 +2014,39 @@ export class Arena {
     this._streakFxTimer = setTimeout(() => el.classList.remove('on'), 620);
   }
 
-  hitMarker(t, dmg) {
+  hitMarker(t, dmg, killed = false) {
     const now = performance.now();
     if (now - this.hitChainAt > 1100) this.hitChain = 0;
     this.hitChainAt = now;
     this.hitChain += 1;
     audio.play('hitmark', { pitch: 1 + Math.min(this.hitChain, 9) * 0.07 });
-    this.hitmarks.push({ x: t.x, y: t.y, life: 0.26, max: 0.26, big: dmg > 45 });
+    const life = killed ? 0.5 : 0.26;
+    this.hitmarks.push({ x: t.x, y: t.y, life, max: life, big: dmg > 45, kill: killed });
+    if (killed) audio.play('killmark');
   }
 
   drawHitmarks(ctx) {
     for (const m of this.hitmarks) {
       const k = clamp(m.life / m.max, 0, 1);
-      const s = (m.big ? 13 : 9) * (1.25 - k * 0.25);
+      const s = (m.kill ? 15 : m.big ? 13 : 9) * (1.25 - k * 0.25);
       ctx.save();
       ctx.globalAlpha = k;
-      ctx.strokeStyle = m.big ? '#ffd27a' : '#ffffff';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = m.kill ? '#ffb347' : m.big ? '#ffd27a' : '#ffffff';
+      ctx.lineWidth = m.kill ? 2.6 : 2;
       ctx.beginPath();
       ctx.moveTo(m.x - s, m.y - s); ctx.lineTo(m.x - s * 0.4, m.y - s * 0.4);
       ctx.moveTo(m.x + s, m.y - s); ctx.lineTo(m.x + s * 0.4, m.y - s * 0.4);
       ctx.moveTo(m.x - s, m.y + s); ctx.lineTo(m.x - s * 0.4, m.y + s * 0.4);
       ctx.moveTo(m.x + s, m.y + s); ctx.lineTo(m.x + s * 0.4, m.y + s * 0.4);
       ctx.stroke();
+      if (m.kill) {
+        ctx.globalAlpha = k * 0.85;
+        ctx.strokeStyle = '#ffd27a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, (1 - k) * 34 + 8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.restore();
     }
   }
@@ -2049,6 +2076,7 @@ export class Arena {
       frames: this.replayBuf.slice(),
       obstacles: this.obstacles.map((o) => ({ x: o.x, y: o.y, type: o.type, w: o.w, h: o.h })),
       focus: this.me ? { x: this.me.x, y: this.me.y } : { x: WORLD.size / 2, y: WORLD.size / 2 },
+      last: this.lastBlood,
       size: WORLD.size,
     };
   }

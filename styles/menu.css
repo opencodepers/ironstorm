@@ -955,3 +955,54 @@ input[type=range]::-moz-range-thumb {
 .rankup-card span { display: block; margin-top: 8px; font-size: 9px; letter-spacing: .24em; color: #8ea082; }
 @keyframes rankIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rankPulse { 0% { transform: scale(.72); opacity: .9; } 100% { transform: scale(1.25); opacity: 0; } }
+
+/* contract header + claim all */
+.cc-headrow {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px;
+}
+.cc-headrow b { display: block; font-family: var(--display); font-size: 11px; letter-spacing: .16em; color: #dfeed2; }
+.cc-headrow span { font-size: 9px; letter-spacing: .1em; color: #6f8164; }
+.cc-all { animation: ccAllIn .4s var(--ease-spring) both; }
+@keyframes ccAllIn { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: none; } }
+
+/* kill cam controls */
+.replay-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(255, 255, 255, .1); z-index: 3; }
+.replay-progress i { display: block; height: 100%; width: 0; background: #8fe86b; }
+.replay-controls {
+  position: absolute; right: 10px; bottom: 9px; z-index: 4;
+  display: flex; gap: 6px; opacity: 0; transition: opacity .25s ease;
+}
+.report-replay:hover .replay-controls,
+.report-replay.done .replay-controls { opacity: 1; }
+.rc-btn {
+  font: inherit; font-size: 8px; letter-spacing: .16em; padding: 4px 9px;
+  background: rgba(10, 18, 12, .88); border: 1px solid #35502b;
+  color: #cfe2c0; cursor: pointer;
+}
+.rc-btn:hover { border-color: #8fe86b; color: #fff; }
+.rc-btn.ghost { background: transparent; color: #8ea082; }
+.replay-final {
+  position: absolute; inset: 0; display: grid; place-items: center; z-index: 3;
+  background: rgba(248, 255, 240, .92); color: #0b130d;
+  font-family: var(--display); font-size: 13px; letter-spacing: .3em;
+  padding: 0 20px; text-align: center; opacity: 0; pointer-events: none;
+}
+.replay-final.on { animation: replayFlash 1.15s ease-out forwards; }
+@keyframes replayFlash {
+  0% { opacity: .95; }
+  16% { opacity: .5; }
+  100% { opacity: 0; }
+}
+.report-replay.skipped { display: none; }
+
+/* promotion progress */
+.rankup { cursor: pointer; }
+.rankup-next {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 14px; font-size: 9px; letter-spacing: .24em; color: #cfe2c0;
+}
+.rankup-next em { font-style: normal; color: #6f8164; letter-spacing: .18em; }
+.rankup-bar { width: 230px; height: 3px; margin: 8px auto 0; background: #1a2617; }
+.rankup-bar i { display: block; height: 100%; background: linear-gradient(90deg, #4f9a2b, #8fe86b); }
+.rankup-card small { display: block; margin-top: 12px; font-size: 8px; letter-spacing: .3em; color: #5f7355; }

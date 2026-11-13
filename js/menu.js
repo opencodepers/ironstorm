@@ -405,6 +405,7 @@ function wirePane() {
     root.querySelectorAll('[data-contract]').forEach((btn) => {
       btn.addEventListener('click', () => doContract(parseInt(btn.dataset.contract, 10), btn));
     });
+    $('#claim-all')?.addEventListener('click', (e) => doClaimAll(e.currentTarget));
     document.getElementById('daily-claim')?.addEventListener('click', (e) => doDaily(e.currentTarget));
   }
 }
@@ -710,21 +711,37 @@ function renderCamo() {
   }).join('')}</div>`;
 }
 
+function msToUtcMidnight() {
+  const now = new Date();
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  return Math.max(0, next - now.getTime());
+}
+
 function renderContracts() {
   const c = ensureContracts();
   if (!c) return '';
   const modeName = (MODES[c.mode] || MODES.team).name;
-  return `<div class="contract-grid">${CONTRACT_DEFS.map((d, i) => {
+  const claimed = c.claimed || [];
+  const readyIds = CONTRACT_DEFS.map((d, i) => i)
+    .filter((i) => (c[CONTRACT_DEFS[i].key] || 0) >= CONTRACT_DEFS[i].target && !claimed.includes(i));
+  const head = `<div class="cc-headrow">
+      <div>
+        <b>DAILY CONTRACTS</b>
+        <span>${claimed.length}/${CONTRACT_DEFS.length} claimed · resets in ${countdown(msToUtcMidnight())}</span>
+      </div>
+      ${readyIds.length > 1 ? `<button class="sc-buy cc-all" id="claim-all">${ICONS.coin}CLAIM ALL · ${readyIds.length}</button>` : ''}
+    </div>`;
+  return `${head}<div class="contract-grid">${CONTRACT_DEFS.map((d, i) => {
     const have = Math.min(d.target, c[d.key] || 0);
     const done = have >= d.target;
-    const claimed = (c.claimed || []).includes(i);
-    return `<article class="contract-card ${claimed ? 'done' : done ? 'ready' : ''}">
+    const isClaimed = claimed.includes(i);
+    return `<article class="contract-card ${isClaimed ? 'done' : done ? 'ready' : ''}">
       <div class="cc-head"><h3>${d.title}</h3><span class="cc-reward">${ICONS.coin}${fmt(d.reward)}</span></div>
       <p>${esc(d.sub.replace('{mode}', modeName))}</p>
       <div class="cc-bar"><i style="width:${(have / d.target) * 100}%"></i></div>
       <div class="cc-foot"><span>${have} / ${d.target}</span>
-        ${claimed
-          ? '<button class="sc-buy done" disabled>CLAIMED</button>'
+        ${isClaimed
+          ? '<button class="sc-buy done" disabled>✓ CLAIMED</button>'
           : done
             ? `<button class="sc-buy" data-contract="${i}">${ICONS.coin}CLAIM</button>`
             : '<button class="sc-buy locked" disabled>IN PROGRESS</button>'}
@@ -772,6 +789,34 @@ async function doSkin(id, btn) {
   } else {
     audio.play('deny');
     toast(res.why || 'Unavailable', 'bad');
+  }
+}
+
+async function doClaimAll(btn) {
+  btn?.classList.add('busy');
+  const c = ensureContracts();
+  const claimed = c.claimed || [];
+  const ids = CONTRACT_DEFS.map((d, i) => i)
+    .filter((i) => (c[CONTRACT_DEFS[i].key] || 0) >= CONTRACT_DEFS[i].target && !claimed.includes(i));
+  let paid = 0;
+  for (const i of ids) {
+    if (state.mode === 'account') {
+      const r = await net.claimContract(i);
+      if (r.ok) { state.profile = fromRowLocal(r.row); paid += CONTRACT_DEFS[i].reward; }
+    } else {
+      const r = claimContractLocal(i);
+      if (r.ok) paid += r.reward;
+    }
+  }
+  btn?.classList.remove('busy');
+  if (paid) {
+    audio.play('buy');
+    refreshMenu();
+    rerenderPaneBody();
+    toast(`${ids.length} contracts claimed: +${fmt(paid)} credits`, 'good');
+  } else {
+    audio.play('deny');
+    toast('Nothing left to claim', 'bad');
   }
 }
 
@@ -1074,8 +1119,14 @@ export function showReport(data) {
         <canvas id="replay-canvas"></canvas>
         <span class="replay-bar top"></span>
         <span class="replay-bar bottom"></span>
-        <span class="replay-tag">FINAL MOMENT · KILL CAM</span>
-        <span class="replay-rate">0.4×</span>
+        <span class="replay-tag">FINAL MOMENT · KILL CAM${data.replay.last ? ` · ${esc(data.replay.last.victim)}` : ''}</span>
+        <span class="replay-rate" id="replay-rate">0.90×</span>
+        <div class="replay-progress"><i id="replay-fill"></i></div>
+        <div class="replay-controls">
+          <button class="rc-btn" id="replay-restart">⟳ REPLAY</button>
+          <button class="rc-btn ghost" id="replay-skip">SKIP</button>
+        </div>
+        <div class="replay-final" id="replay-final">${data.replay.last ? esc(data.replay.last.by || '') + ' ELIMINATED ' + esc(data.replay.last.victim) : 'FINAL BLOW'}</div>
       </div>` : ''}
       <div class="report-stats">
         ${rstat('KILLS', data.kills)}
@@ -1103,6 +1154,18 @@ export function showReport(data) {
 
   if (data.replay) playReplay($('#replay-canvas'), data.replay);
   if (data.levelUp) setTimeout(() => showRankUp(p.level), 260);
+
+  $('#replay-restart')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('#replay-final')?.classList.remove('on');
+    $('.report-replay')?.classList.remove('done');
+    playReplay($('#replay-canvas'), data.replay);
+  });
+  $('#replay-skip')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    stopReplay();
+    $('.report-replay')?.classList.add('skipped');
+  });
 
   $('#report-menu')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
   $('#report-again')?.addEventListener('click', () => {
@@ -1135,14 +1198,33 @@ function playReplay(canvas, replay) {
   const frames = replay.frames;
   const t0 = frames[0].t;
   const span = Math.max(0.001, frames[frames.length - 1].t - t0);
-  const scale = 0.62;
-  const focus = replay.focus || { x: (replay.size || 2600) / 2, y: (replay.size || 2600) / 2 };
+  const focus0 = replay.focus || { x: (replay.size || 2600) / 2, y: (replay.size || 2600) / 2 };
+  const lastFrame = frames[frames.length - 1];
+  const localLast = lastFrame.tanks.find((t) => t.local);
+  const target = localLast ? { x: localLast.x, y: localLast.y } : focus0;
+  const DUR = 3.6;
+  const wrap = canvas.closest('.report-replay');
+  const rateEl = $('#replay-rate');
+  const fillEl = $('#replay-fill');
+  const finalEl = $('#replay-final');
   const started = performance.now();
+  let finished = false;
+  let finishAt = 0;
 
   const draw = (now) => {
     replayRaf = requestAnimationFrame(draw);
-    const k = (((now - started) / 1000) * 0.4) % 1;
-    const tt = t0 + k * span;
+    const p = Math.min(1, (now - started) / (DUR * 1000));
+    const eased = 1 - Math.pow(1 - p, 2.4);
+    const tt = t0 + eased * span;
+    if (rateEl) rateEl.textContent = (0.9 - eased * 0.72).toFixed(2) + '×';
+    if (fillEl) fillEl.style.width = (p * 100).toFixed(1) + '%';
+    if (p >= 1 && !finished) {
+      finished = true;
+      finishAt = now;
+      wrap?.classList.add('done');
+      finalEl?.classList.add('on');
+    }
+    const flash = finished ? Math.max(0, 1 - (now - finishAt) / 380) : 0;
     let idx = 0;
     while (idx < frames.length - 1 && frames[idx + 1].t <= tt) idx += 1;
     const f = frames[idx];
@@ -1150,13 +1232,17 @@ function playReplay(canvas, replay) {
     ctx.fillStyle = '#080d09';
     ctx.fillRect(0, 0, W, H);
 
+    const sc = 0.5 + eased * 0.24;
+    const fx = focus0.x + (target.x - focus0.x) * eased * 0.7;
+    const fy = focus0.y + (target.y - focus0.y) * eased * 0.7;
+
     ctx.save();
     ctx.translate(W / 2, H / 2);
-    ctx.scale(scale, scale);
-    ctx.translate(-focus.x, -focus.y);
+    ctx.scale(sc, sc);
+    ctx.translate(-fx, -fy);
 
     ctx.fillStyle = 'rgba(74, 96, 60, 0.55)';
-    ctx.fillRect(focus.x - 1000, focus.y - 1000, 2000, 2000);
+    ctx.fillRect(fx - 1000, fy - 1000, 2000, 2000);
 
     for (const o of replay.obstacles) {
       const im = img(o.type);
@@ -1193,6 +1279,10 @@ function playReplay(canvas, replay) {
     }
     ctx.restore();
 
+    if (flash > 0) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${flash * 0.85})`;
+      ctx.fillRect(0, 0, W, H);
+    }
     ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
     for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
   };
@@ -1218,6 +1308,8 @@ function rankInsignia(level) {
 function showRankUp(level) {
   const root = $('#modal-root');
   if (!root) return;
+  const p = state.profile;
+  const prog = p ? levelProgress(p.xp) : { pct: 0 };
   const el = document.createElement('div');
   el.className = 'rankup';
   el.innerHTML = `<div class="rankup-glow"></div>
@@ -1226,14 +1318,22 @@ function showRankUp(level) {
       <p>PROMOTION</p>
       <h2>${rankName(level)}</h2>
       <span>LEVEL ${level} · SUPPLY CRATE UNLOCKED</span>
+      <div class="rankup-next"><em>NEXT RANK</em> ${rankName(level + 2)}</div>
+      <div class="rankup-bar"><i style="width:${Math.round(prog.pct * 100)}%"></i></div>
+      <small>CLICK TO CONTINUE</small>
     </div>`;
   root.appendChild(el);
   audio.play('rank');
   grantRankCrate();
-  setTimeout(() => {
+  let closed = false;
+  const dismiss = () => {
+    if (closed) return;
+    closed = true;
     el.classList.add('out');
-    setTimeout(() => el.remove(), 520);
-  }, 1900);
+    setTimeout(() => el.remove(), 480);
+  };
+  el.addEventListener('click', dismiss);
+  setTimeout(dismiss, 2400);
 }
 
 async function grantRankCrate() {

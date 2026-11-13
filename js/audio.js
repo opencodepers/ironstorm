@@ -90,6 +90,11 @@ const SFX = {
     tone(1180 * pitch, 0.045, { type: 'square', gain: 0.075, to: 820 * pitch });
     noise(0.035, { gain: 0.15, freq: 5200 * pitch, q: 3 });
   },
+  killmark() {
+    tone(240, 0.16, { type: 'square', gain: 0.1, to: 118 });
+    tone(1560, 0.1, { type: 'triangle', gain: 0.085, delay: 0.02, to: 880 });
+    noise(0.12, { gain: 0.18, freq: 2200, q: 1.6, sweep: -900 });
+  },
   streak() {
     tone(660, 0.12, { type: 'triangle', gain: 0.13 });
     tone(990, 0.16, { gain: 0.1, delay: 0.06 });
