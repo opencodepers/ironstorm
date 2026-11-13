@@ -1,0 +1,227 @@
+/* ==================================================================
+   IronStorm — in-battle HUD
+   ================================================================== */
+
+#screen-game { background: #040705; }
+#arena-canvas {
+  position: absolute; inset: 0; display: block;
+  cursor: crosshair;
+}
+#hud {
+  position: absolute; inset: 0; pointer-events: none;
+  font-family: var(--font);
+  color: #d6e4cb;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+}
+#hud .hidden { display: none !important; }
+
+/* corner brackets around the viewport */
+#hud::before, #hud::after {
+  content: ''; position: absolute; width: 34px; height: 34px;
+  border: 1px solid rgba(130, 200, 100, .22);
+  pointer-events: none;
+}
+#hud::before { top: 12px; left: 12px; border-right: 0; border-bottom: 0; }
+#hud::after { bottom: 12px; right: 12px; border-left: 0; border-top: 0; }
+
+/* ---------------------------------------------------------------- top left */
+.hud-topleft {
+  position: absolute; top: 22px; left: 26px;
+  display: flex; gap: 22px; align-items: flex-end;
+  padding: 10px 16px;
+  background: linear-gradient(180deg, rgba(4, 9, 5, .55), rgba(4, 9, 5, .15));
+  border-left: 2px solid rgba(120, 190, 90, .45);
+}
+.hud-stat { display: flex; flex-direction: column; gap: 2px; }
+.hud-stat .hl { font-size: 8px; letter-spacing: .2em; color: #7f9074; }
+.hud-stat .hv { font-size: 17px; color: #e6f2da; letter-spacing: .06em; }
+
+/* ---------------------------------------------------------------- top right */
+.hud-topright {
+  position: absolute; top: 22px; right: 26px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+}
+.hud-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 9.5px; letter-spacing: .16em; color: #8a9c80;
+}
+.hud-meta b { color: #4d5c45; font-weight: 400; }
+#hud-fps:not(:empty)::before { content: '·'; margin-right: 8px; color: #4d5c45; }
+
+.hud-board {
+  width: 232px;
+  background: rgba(4, 9, 5, .55);
+  border: 1px solid rgba(60, 90, 48, .5);
+  backdrop-filter: blur(2px);
+}
+.hud-board::before {
+  content: 'SECTOR RANKING';
+  display: block; padding: 6px 10px 4px;
+  font-size: 8px; letter-spacing: .22em; color: #6f8065;
+  border-bottom: 1px solid rgba(60, 90, 48, .35);
+}
+.board-row {
+  display: grid; grid-template-columns: 18px 1fr 30px 52px;
+  gap: 6px; padding: 5px 10px; font-size: 10.5px; color: #c3d3b7;
+  border-bottom: 1px solid rgba(255, 255, 255, .03);
+}
+.board-row:last-child { border-bottom: 0; }
+.board-row.me { background: rgba(52, 96, 34, .35); color: #c9f0ab; }
+.br-rank { color: #6f8065; }
+.br-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  letter-spacing: .06em;
+}
+.br-k { text-align: right; color: #d9b45c; }
+.br-s { text-align: right; color: #8fa383; font-size: 9.5px; }
+
+/* expanded scoreboard */
+.hud-board.expanded {
+  width: 320px;
+  background: rgba(4, 9, 5, .92);
+}
+.hud-board.expanded::before { content: 'SECTOR RANKING · ALL COMMANDERS'; }
+.hud-board.expanded .board-row { font-size: 11.5px; padding: 7px 10px; }
+
+/* ---------------------------------------------------------------- feed */
+.hud-feed {
+  position: absolute; top: 116px; left: 26px;
+  display: flex; flex-direction: column; gap: 4px;
+  max-width: 380px;
+}
+.feed-item {
+  font-size: 10.5px; letter-spacing: .06em; color: #b9c9ad;
+  padding: 4px 10px;
+  background: rgba(4, 9, 5, .55);
+  border-left: 2px solid #5f8a52;
+  opacity: 1; transition: opacity .6s;
+}
+.feed-item b { color: #e7f3db; font-weight: 400; }
+.feed-item.fade { opacity: 0; }
+
+.hud-chat-log {
+  position: absolute; left: 26px; bottom: 132px;
+  display: flex; flex-direction: column; gap: 2px;
+  max-width: 420px;
+}
+.chat-line {
+  font-size: 11px; color: #b9c9ad; padding: 2px 8px;
+  background: rgba(4, 9, 5, .5);
+  transition: opacity .8s;
+}
+.chat-line b { color: #8fe86b; font-weight: 400; }
+.chat-line.fade { opacity: 0; }
+
+.hud-chat {
+  position: absolute; left: 26px; bottom: 104px;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(4, 9, 5, .92);
+  border: 1px solid #3c5335; padding: 6px 10px;
+  pointer-events: auto; width: 380px;
+}
+.chat-prompt { font-size: 9px; letter-spacing: .2em; color: #8fe86b; }
+#hud-chat-input {
+  flex: 1; background: none; border: 0; outline: none;
+  color: #e0eed4; font-family: var(--font); font-size: 12px; letter-spacing: .04em;
+}
+
+/* ---------------------------------------------------------------- announce */
+.hud-announce {
+  position: absolute; left: 50%; top: 26%;
+  transform: translate(-50%, -6px);
+  font-family: var(--display); font-weight: 600;
+  font-size: 26px; letter-spacing: .34em; color: #e9f6dd;
+  padding: 10px 26px;
+  background: linear-gradient(90deg, transparent, rgba(6, 14, 8, .72) 15%, rgba(6, 14, 8, .72) 85%, transparent);
+  opacity: 0; transition: opacity .3s, transform .3s;
+  text-shadow: 0 0 24px rgba(143, 232, 107, .5);
+}
+.hud-announce.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------------------------------------------------------------- bottom left */
+.hud-bottomleft {
+  position: absolute; left: 26px; bottom: 22px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.hud-powers { display: flex; gap: 6px; }
+.power-chip {
+  font-size: 9px; letter-spacing: .16em; padding: 4px 8px;
+  color: var(--c); border: 1px solid currentColor;
+  background: rgba(4, 9, 5, .6);
+  box-shadow: 0 0 14px -4px var(--c);
+}
+.hud-hint { font-size: 8.5px; letter-spacing: .1em; color: #4f5c49; }
+
+/* ---------------------------------------------------------------- health */
+.hud-bottomcenter {
+  position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+  width: min(460px, 46vw);
+}
+.hp-bar {
+  height: 14px; background: rgba(4, 9, 5, .75);
+  border: 1px solid #3a5030; padding: 2px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, .5);
+}
+.hp-bar i {
+  display: block; height: 100%; width: 100%;
+  background: linear-gradient(90deg, #5fbf2e, #8fe86b);
+  transition: width .12s linear;
+}
+.hp-meta {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 6px;
+  font-size: 9px; letter-spacing: .14em; color: #8fa383;
+}
+.reload-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.reload-bar { display: block; width: 80px; height: 4px; background: #182315; border: 1px solid #27371f; }
+.reload-bar b { display: block; height: 100%; width: 100%; background: #d9b45c; }
+.dash {
+  padding: 2px 7px; border: 1px solid #33462c; color: #5c6a55;
+  font-size: 8.5px; letter-spacing: .14em;
+  background: linear-gradient(90deg, rgba(70, 120, 45, .55) var(--ready, 0%), transparent var(--ready, 0%));
+}
+.dash.ready { color: #b9f09a; border-color: #5f8a52; }
+
+/* ---------------------------------------------------------------- minimap */
+.hud-minimap {
+  position: absolute; right: 26px; bottom: 26px;
+  width: 168px; height: 168px;
+  border: 1px solid rgba(70, 110, 55, .6);
+  background: rgba(4, 9, 5, .7);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, .5);
+}
+
+/* ---------------------------------------------------------------- respawn */
+.hud-respawn {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px;
+  background: radial-gradient(45% 45% at 50% 50%, rgba(80, 12, 6, .35), transparent 70%);
+}
+.respawn-title {
+  font-family: var(--display); font-weight: 600; font-size: 32px;
+  letter-spacing: .3em; color: #e0a08c;
+  text-shadow: 0 0 30px rgba(200, 60, 30, .5);
+}
+.respawn-sub { font-size: 11px; letter-spacing: .24em; color: #a89088; }
+.respawn-sub b { color: #e8c96a; font-size: 15px; }
+
+/* ---------------------------------------------------------------- pause */
+.hud-pause {
+  position: absolute; inset: 0; pointer-events: auto;
+  background: rgba(2, 5, 3, .78); backdrop-filter: blur(4px);
+  display: grid; place-items: center;
+}
+.pause-card {
+  width: min(400px, 90vw); padding: 28px;
+  background: linear-gradient(180deg, #0c150d, #060a07);
+  border: 1px solid #33492e;
+  display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .8);
+}
+.pause-card h2 {
+  margin: 0; font-family: var(--display); font-weight: 600;
+  font-size: 20px; letter-spacing: .32em; color: #e8f3dd;
+}
+.pause-card p { margin: 0 0 8px; font-size: 10.5px; color: #7d8d73; }
+.pause-note { font-size: 9px; letter-spacing: .1em; color: #566351; text-align: center; margin-top: 4px; }

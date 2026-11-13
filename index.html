@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#070b08" />
+<title>IronStorm — Online Tank Warfare</title>
+<meta name="description" content="IronStorm is a free multiplayer tank arena. Pick a callsign, upgrade your hull, and fight alongside commanders worldwide." />
+<link rel="icon" href="assets/ui/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles/menu.css" />
+<link rel="stylesheet" href="styles/game.css" />
+</head>
+<body>
+
+<!-- ============================================================ boot -->
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-mark">IRON<span>STORM</span></div>
+    <div class="boot-line"><i id="boot-fill"></i></div>
+    <div class="boot-meta"><span>INITIALISING COMMAND UPLINK</span><span id="boot-pct">0%</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ auth -->
+<section id="screen-auth" class="screen hidden">
+  <div class="auth-bg">
+    <div class="auth-glow"></div>
+    <div class="auth-grid"></div>
+  </div>
+  <div class="auth-wrap">
+    <div class="auth-brand">
+      <div class="brand-mark">IRON<span>STORM</span></div>
+      <p class="brand-tag">ONLINE TANK WARFARE · FREE TO PLAY</p>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-tabs">
+        <button class="auth-tab on" data-mode="in">SIGN IN</button>
+        <button class="auth-tab" data-mode="up">CREATE ACCOUNT</button>
+      </div>
+      <h1 id="auth-title">WELCOME BACK, COMMANDER</h1>
+      <p id="auth-sub" class="auth-sub">Sign in with your callsign and password.</p>
+
+      <form id="auth-form" autocomplete="on">
+        <label class="field">
+          <span>CALLSIGN</span>
+          <input id="auth-user" name="username" type="text" spellcheck="false" autocomplete="username"
+                 placeholder="e.g. IRONWOLF" maxlength="16" required />
+        </label>
+        <label class="field">
+          <span>PASSWORD</span>
+          <input id="auth-pass" name="password" type="password" autocomplete="current-password"
+                 placeholder="••••••••" minlength="6" required />
+        </label>
+        <div id="auth-error" class="auth-error"></div>
+        <button id="auth-submit" class="btn btn-play" type="submit">SIGN IN</button>
+      </form>
+
+      <div class="auth-divider"><span>OR</span></div>
+      <button id="auth-guest" class="btn btn-ghost">PLAY AS GUEST</button>
+      <p class="auth-note">Guest progress is saved on this device only.</p>
+    </div>
+
+    <p class="auth-legal">© 2026 IronStorm. All rights reserved.</p>
+  </div>
+</section>
+
+<!-- ============================================================ menu -->
+<section id="screen-menu" class="screen hidden">
+  <div class="bg-layer bg-glow"></div>
+  <div class="bg-layer bg-grid"></div>
+  <div class="bg-layer bg-scan"></div>
+  <div class="bg-layer bg-vignette"></div>
+
+  <header class="topbar">
+    <div class="id-block">
+      <div class="id-card"><span id="menu-username">GUEST2926</span></div>
+      <div class="id-sub" id="menu-sub">Progress saved on this device</div>
+    </div>
+    <div class="credits-card">
+      <div class="coin-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="#c9a227"/><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="none" stroke="#f0d67a" stroke-width="1.1"/><ellipse cx="12" cy="12" rx="3.9" ry="5.8" fill="none" stroke="#8a6a12" stroke-width="1"/><path d="M12 8.4c-1.9 0-2.9.9-2.9 1.9s1 1.6 2.9 2 2.9.9 2.9 2-1 1.9-2.9 1.9" fill="none" stroke="#f7e6a6" stroke-width="1.4"/></svg>
+      </div>
+      <div class="credits-num" id="menu-credits">0</div>
+      <div class="credits-label">CREDITS</div>
+    </div>
+  </header>
+
+  <main class="menu-main">
+    <nav class="rail">
+      <button class="rail-btn" data-pane="upgrades">
+        <span class="rb-icon" data-icon="gear"></span><span class="rb-text">UPGRADES</span>
+      </button>
+      <button class="rail-btn" data-pane="garage">
+        <span class="rb-icon" data-icon="hangar"></span><span class="rb-text">GARAGE</span>
+      </button>
+      <button class="rail-btn" data-pane="leaderboards">
+        <span class="rb-icon" data-icon="trophy"></span><span class="rb-text">LEADERBOARDS</span>
+      </button>
+      <button class="rail-btn" data-pane="gameplay">
+        <span class="rb-icon" data-icon="gamepad"></span><span class="rb-text">GAMEPLAY</span>
+      </button>
+      <div class="rail-scroll" aria-hidden="true"><i></i></div>
+    </nav>
+
+    <section class="stage">
+      <h1 class="tank-name" id="menu-tank-name">M4 SHERMAN</h1>
+
+      <div class="tank-frame">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+        <canvas id="tank-preview" width="380" height="220"></canvas>
+        <div class="frame-scan"></div>
+      </div>
+      <div class="equipped" id="menu-equipped">EQUIPPED</div>
+      <div class="tank-statline">
+        <div class="ts-item"><span>FIRE</span><i><b id="stat-fire"></b></i></div>
+        <div class="ts-item"><span>ARMOUR</span><i><b id="stat-armor"></b></i></div>
+        <div class="ts-item"><span>MOBILITY</span><i><b id="stat-move"></b></i></div>
+      </div>
+      <div class="tank-stattext" id="menu-stat-text"></div>
+
+      <div class="play-wrap">
+        <button id="play-btn" class="play-btn">
+          <span class="play-icon" data-icon="play"></span>
+          <span class="play-label">PLAY</span>
+        </button>
+        <div class="play-sub" id="play-sub">QUICK MATCH</div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="menu-footer">
+    <span>© 2026 IronStorm. All rights reserved.</span>
+    <span class="footer-right">BUILD 1.0.0 · SERVERS: EU-CENTRAL</span>
+  </footer>
+
+  <div id="pane-root" class="pane-root hidden"></div>
+  <div id="toast-root" class="toast-root"></div>
+</section>
+
+<!-- ============================================================ game -->
+<section id="screen-game" class="screen hidden">
+  <canvas id="arena-canvas"></canvas>
+
+  <div id="hud">
+    <div class="hud-topleft">
+      <div class="hud-stat"><span class="hl">SCORE</span><span id="hud-score" class="hv">0</span></div>
+      <div class="hud-stat"><span class="hl">KILLS</span><span id="hud-kills" class="hv">0</span></div>
+      <div class="hud-stat"><span class="hl">DEATHS</span><span id="hud-deaths" class="hv">0</span></div>
+      <div class="hud-stat"><span class="hl">STREAK</span><span id="hud-streak" class="hv">—</span></div>
+    </div>
+
+    <div class="hud-topright">
+      <div class="hud-meta"><span id="hud-timer">00:00</span><b>·</b><span id="hud-online">1 ONLINE</span><b id="hud-fps"></b></div>
+      <div id="hud-board" class="hud-board"></div>
+    </div>
+
+    <div id="hud-feed" class="hud-feed"></div>
+    <div id="hud-chat-log" class="hud-chat-log"></div>
+
+    <div id="hud-chat" class="hud-chat hidden">
+      <span class="chat-prompt">SAY</span>
+      <input id="hud-chat-input" maxlength="120" autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div id="hud-announce" class="hud-announce hidden"></div>
+
+    <div class="hud-bottomleft">
+      <div id="hud-powers" class="hud-powers"></div>
+      <div class="hud-hint">WASD DRIVE · MOUSE AIM · LMB FIRE · SHIFT DASH · ENTER CHAT · TAB BOARD · ESC MENU</div>
+    </div>
+
+    <div class="hud-bottomcenter">
+      <div class="hp-bar"><i id="hud-hp-fill"></i></div>
+      <div class="hp-meta">
+        <span id="hud-hp-text">100 / 100</span>
+        <span class="reload-wrap">RELOAD <i class="reload-bar"><b id="hud-reload-fill"></b></i></span>
+        <span id="hud-dash" class="dash">DASH</span>
+      </div>
+    </div>
+
+    <canvas id="hud-minimap" class="hud-minimap" width="168" height="168"></canvas>
+
+    <div id="hud-respawn" class="hud-respawn hidden">
+      <div class="respawn-title">VEHICLE DESTROYED</div>
+      <div class="respawn-sub">REDEPLOYING IN <b id="hud-respawn-text">3.2</b></div>
+    </div>
+
+    <div id="hud-pause" class="hud-pause hidden">
+      <div class="pause-card">
+        <h2>PAUSED</h2>
+        <p>Combat is frozen while you are paused.</p>
+        <button id="hud-resume" class="btn">RESUME BATTLE</button>
+        <button id="hud-leave" class="btn btn-ghost">LEAVE BATTLE</button>
+        <span class="pause-note">Your kills, credits and XP are saved when you leave.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="modal-root"></div>
+
+<script src="vendor/supabase.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
