@@ -4,7 +4,7 @@
 
 import { SAVE_KEY, SETTINGS_KEY, DEFAULT_SETTINGS } from './config.js';
 import { storage, uuid } from './util.js';
-import { TANKS, levelForXp } from './tanks.js';
+import { TANKS, SKINS, levelForXp } from './tanks.js';
 
 export const state = {
   mode: 'guest',          // 'guest' | 'account'
@@ -30,6 +30,9 @@ export function newGuestProfile() {
     xp: 0,
     tank: 'sherman',
     owned: ['sherman'],
+    skin: 'olive',
+    ownedSkins: ['olive'],
+    lastDaily: 0,
     upgrades: { ...DEFAULT_UPGRADES },
     kills: 0,
     deaths: 0,
@@ -49,6 +52,9 @@ export function fromRow(row) {
     xp: row.xp ?? 0,
     tank: row.tank_id || 'sherman',
     owned: Array.isArray(row.owned_tanks) && row.owned_tanks.length ? row.owned_tanks : ['sherman'],
+    skin: row.skin || 'olive',
+    ownedSkins: Array.isArray(row.owned_skins) && row.owned_skins.length ? row.owned_skins : ['olive'],
+    lastDaily: row.last_daily ? Date.parse(row.last_daily) || 0 : 0,
     upgrades: { ...DEFAULT_UPGRADES, ...(row.upgrades || {}) },
     kills: row.kills ?? 0,
     deaths: row.deaths ?? 0,
@@ -116,6 +122,44 @@ export function buyTankLocal(id) {
   p.tank = id;
   save();
   return { ok: true };
+}
+
+export function buySkinLocal(id) {
+  const p = state.profile;
+  const s = SKINS[id];
+  if (!s || p.ownedSkins.includes(id)) return { ok: false, why: 'Already owned' };
+  if (p.level < s.unlock) return { ok: false, why: `Unlocks at level ${s.unlock}` };
+  if (p.credits < s.price) return { ok: false, why: 'Not enough credits' };
+  p.credits -= s.price;
+  p.ownedSkins.push(id);
+  p.skin = id;
+  save();
+  return { ok: true };
+}
+
+export function equipSkinLocal(id) {
+  if (!state.profile.ownedSkins.includes(id)) return false;
+  state.profile.skin = id;
+  save();
+  return true;
+}
+
+const DAILY_COOLDOWN = 20 * 60 * 60 * 1000;
+
+export function dailyState() {
+  const last = state.profile?.lastDaily || 0;
+  const left = Math.max(0, DAILY_COOLDOWN - (Date.now() - last));
+  return { ready: left <= 0, nextAt: last + DAILY_COOLDOWN, msLeft: left };
+}
+
+export function claimDailyLocal() {
+  const st = dailyState();
+  if (!st.ready) return { ok: false, why: 'Crate already opened', msLeft: st.msLeft };
+  const reward = Math.floor(120 + Math.random() * 140);
+  state.profile.credits += reward;
+  state.profile.lastDaily = Date.now();
+  save();
+  return { ok: true, reward };
 }
 
 export function buyUpgradeLocal(key) {

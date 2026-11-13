@@ -119,6 +119,24 @@ export async function buyUpgrade(key) {
   return { ok: true, row: data };
 }
 
+export async function buySkin(id) {
+  const { data, error } = await sb.rpc('buy_skin', { p_skin: id });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, row: data };
+}
+
+export async function equipSkin(id) {
+  const { data, error } = await sb.rpc('equip_skin', { p_skin: id });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, row: data };
+}
+
+export async function claimDaily() {
+  const { data, error } = await sb.rpc('claim_daily');
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, reward: data?.reward ?? 0, row: data?.profile || null };
+}
+
 export async function buyTank(id) {
   const { data, error } = await sb.rpc('buy_tank', { p_tank: id });
   if (error) return { ok: false, error: friendly(error.message) };

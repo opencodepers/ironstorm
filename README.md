@@ -29,6 +29,25 @@ The site is plain HTML/CSS/JS modules — no build step. Serve it over HTTP
   joins the same arena channel; remote tanks are interpolated at 10 Hz.
   Practice bots keep the map busy.
 
+## Warzones
+
+| Mode | Objective |
+| --- | --- |
+| Deathmatch | Free-for-all, first to 25 kills |
+| Team Battle | Green vs Red, first to 60 team kills |
+| King of the Hill | Hold the central zone, first to 100 points |
+| Survival | Three lives against endless escalating waves |
+
+The selected warzone carries from the landing page into the arena, and weather
+(clear / rain / fog / dusk) is rolled per match.
+
+## Shop and progression
+
+- 12 vehicles from the M4 Sherman to the KV-2, each with its own handling model.
+- 8 camouflage patterns applied as canvas filters, so any camo fits any hull.
+- Daily supply crate every 20 hours, priced and granted server-side.
+- Five upgrade lines, 25 levels, credits and XP for every battle.
+
 ## Controls
 
 | Input | Action |

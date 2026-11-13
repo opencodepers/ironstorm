@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles/landing.css" />
 <link rel="stylesheet" href="styles/menu.css" />
 <link rel="stylesheet" href="styles/game.css" />
 </head>
@@ -23,6 +24,62 @@
     <div class="boot-meta"><span>INITIALISING COMMAND UPLINK</span><span id="boot-pct">0%</span></div>
   </div>
 </div>
+
+<!-- ============================================================ landing -->
+<section id="screen-landing" class="screen hidden">
+  <canvas id="landing-canvas"></canvas>
+  <div class="land-grain"></div>
+  <div class="land-vignette"></div>
+  <div class="land-scan"></div>
+
+  <header class="land-nav">
+    <div class="land-brand">
+      <span class="lb-mark">IRON<span>STORM</span></span>
+      <span class="lb-season">SEASON 01</span>
+    </div>
+    <nav class="land-links">
+      <button data-jump="modes">WARZONES</button>
+      <button data-jump="arsenal">ARSENAL</button>
+    </nav>
+    <div class="land-status">
+      <span class="live-dot" aria-hidden="true"></span>
+      <span id="land-online">GLOBAL ARENA ONLINE</span>
+      <button id="land-signin" class="chip-btn">SIGN IN</button>
+    </div>
+  </header>
+
+  <main class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow"><i></i> OPERATION IRONSTORM · LIVE FIRE</p>
+      <h1 class="hero-title"><span>IRON</span>STORM</h1>
+      <p class="hero-tag">TWELVE TANKS · FOUR WARZONES · ONE GLOBAL ARENA</p>
+      <p class="hero-sub">
+        Free multiplayer tank combat that runs straight in your browser. Enlist under a callsign,
+        upgrade your hull, and roll into a live battlefield shared by commanders worldwide.
+      </p>
+      <div class="hero-cta">
+        <button id="land-deploy" class="cta cta-primary"><span class="cta-glint"></span><b>DEPLOY NOW</b><span class="cta-arrow">→</span></button>
+        <button id="land-garage" class="cta cta-ghost">ENTER THE GARAGE</button>
+      </div>
+      <ul class="hero-stats">
+        <li><b>12</b><span>VEHICLES</span></li>
+        <li><b>4</b><span>WARZONES</span></li>
+        <li><b>FREE</b><span>TO PLAY</span></li>
+      </ul>
+    </div>
+
+    <aside class="mode-rack" id="land-modes">
+      <h2>SELECT WARZONE</h2>
+      <div class="mode-list"></div>
+      <p class="mode-hint">YOUR CHOICE CARRIES INTO THE ARENA</p>
+    </aside>
+  </main>
+
+  <footer class="land-foot">
+    <div class="ticker"><div class="ticker-track" id="land-ticker"></div></div>
+    <span class="land-legal">© 2026 IRONSTORM · NO DOWNLOAD REQUIRED</span>
+  </footer>
+</section>
 
 <!-- ============================================================ auth -->
 <section id="screen-auth" class="screen hidden">
@@ -97,6 +154,9 @@
       <button class="rail-btn" data-pane="garage">
         <span class="rb-icon" data-icon="hangar"></span><span class="rb-text">GARAGE</span>
       </button>
+      <button class="rail-btn" data-pane="shop">
+        <span class="rb-icon" data-icon="cart"></span><span class="rb-text">SHOP</span>
+      </button>
       <button class="rail-btn" data-pane="leaderboards">
         <span class="rb-icon" data-icon="trophy"></span><span class="rb-text">LEADERBOARDS</span>
       </button>
@@ -123,6 +183,8 @@
       </div>
       <div class="tank-stattext" id="menu-stat-text"></div>
 
+      <div class="mode-strip" id="menu-modes" aria-label="Selected warzone"></div>
+
       <div class="play-wrap">
         <button id="play-btn" class="play-btn">
           <span class="play-icon" data-icon="play"></span>
@@ -147,6 +209,14 @@
   <canvas id="arena-canvas"></canvas>
 
   <div id="hud">
+    <div class="hud-modebar" id="hud-modebar">
+      <span class="hm-mode" id="hud-mode">DEATHMATCH</span>
+      <span class="hm-obj"><b id="hud-objective">0 / 25</b><i id="hud-objective-label">KILLS</i></span>
+      <span class="hm-time"><i>TIME</i><b id="hud-remaining">04:00</b></span>
+    </div>
+
+    <div id="hud-medals" class="hud-medals"></div>
+
     <div class="hud-topleft">
       <div class="hud-stat"><span class="hl">SCORE</span><span id="hud-score" class="hv">0</span></div>
       <div class="hud-stat"><span class="hl">KILLS</span><span id="hud-kills" class="hv">0</span></div>
@@ -178,6 +248,7 @@
       <div class="hp-bar"><i id="hud-hp-fill"></i></div>
       <div class="hp-meta">
         <span id="hud-hp-text">100 / 100</span>
+        <span id="hud-lives" class="hud-lives"></span>
         <span class="reload-wrap">RELOAD <i class="reload-bar"><b id="hud-reload-fill"></b></i></span>
         <span id="hud-dash" class="dash">DASH</span>
       </div>

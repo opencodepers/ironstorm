@@ -225,3 +225,47 @@
 }
 .pause-card p { margin: 0 0 8px; font-size: 10.5px; color: #7d8d73; }
 .pause-note { font-size: 9px; letter-spacing: .1em; color: #566351; text-align: center; margin-top: 4px; }
+
+/* ==================================================================
+   Mode HUD, medals, lives
+   ================================================================== */
+.hud-modebar {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 18px;
+  border: 1px solid #2c4026; background: rgba(6, 11, 8, .74);
+  padding: 8px 18px; backdrop-filter: blur(6px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  z-index: 6;
+}
+.hm-mode {
+  font-family: var(--display); font-size: 11px; letter-spacing: .2em;
+  color: #cfe2c0; padding-right: 16px; border-right: 1px solid #24331f;
+}
+.hm-obj, .hm-time { display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.hm-obj b, .hm-time b { font-size: 13px; color: #eaf7de; letter-spacing: .08em; }
+.hm-obj i, .hm-time i {
+  font-style: normal; font-size: 7.5px; letter-spacing: .2em; color: #748567;
+}
+.hm-time { padding-left: 16px; border-left: 1px solid #24331f; }
+.hm-time b { color: #f0e2b4; }
+
+.hud-medals {
+  position: absolute; top: 21%; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  pointer-events: none; z-index: 7;
+}
+.medal { text-align: center; animation: medalIn .34s cubic-bezier(.2, .9, .2, 1) both; }
+.medal b {
+  display: block; font-family: var(--display); font-size: clamp(24px, 3.4vw, 42px);
+  font-weight: 700; letter-spacing: .14em; color: #f4ffe9;
+  text-shadow: 0 0 28px rgba(143, 232, 107, .55), 0 4px 18px rgba(0, 0, 0, .7);
+}
+.medal span { font-size: 8.5px; letter-spacing: .3em; color: #a9c497; }
+.medal.out { opacity: 0; transform: translateY(-16px); transition: .45s ease; }
+@keyframes medalIn {
+  from { opacity: 0; transform: scale(.82) translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.hud-lives { font-size: 9px; letter-spacing: .14em; color: #9fe07a; }
+.hud-lives.danger { color: #e08a6a; animation: livePulse 1.1s ease-in-out infinite; }

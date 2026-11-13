@@ -9,19 +9,21 @@ import * as net from './net.js';
 import { Arena } from './game.js';
 import {
   initMenu, refreshMenu, startPreview, stopPreview, showReport,
-  bindAuth, showAuthScreen, toast, closePane,
+  bindAuth, showAuthScreen, toast, closePane, openPane,
 } from './menu.js';
+import { initLanding, showLanding, hideLanding } from './landing.js';
 import { $, storage } from './util.js';
 
 const app = { arena: null };
 
 function setScreen(name) {
-  for (const id of ['screen-auth', 'screen-menu', 'screen-game']) {
+  for (const id of ['screen-landing', 'screen-auth', 'screen-menu', 'screen-game']) {
     $('#' + id)?.classList.toggle('hidden', id !== name);
   }
 }
 
 function showMenu() {
+  hideLanding();
   setScreen('screen-menu');
   refreshMenu();
   stopPreview();
@@ -56,17 +58,13 @@ async function boot() {
     }
   }
   finishBoot();
-  showAuthScreen(true);
 }
 
 function finishBoot() {
   $('#boot')?.classList.add('done');
   setTimeout(() => $('#boot')?.remove(), 600);
-  if (state.profile) {
-    setScreen('screen-menu');
-    refreshMenu();
-    startPreview();
-  }
+  showLanding();
+  refreshMenu();
 }
 
 // ---------------------------------------------------------------- auth wiring
@@ -86,6 +84,23 @@ bindAuth({
 
 initMenu({ onPlay: startArena });
 
+initLanding({
+  onDeploy() {
+    if (!state.profile) { hideLanding(); showAuthScreen(true); return; }
+    showMenu();
+  },
+  onGarage() {
+    if (!state.profile) { hideLanding(); showAuthScreen(true); return; }
+    showMenu();
+    openPane('garage');
+  },
+  onAuth() {
+    if (state.profile) { showMenu(); return; }
+    hideLanding();
+    showAuthScreen(true);
+  },
+});
+
 // ---------------------------------------------------------------- arena
 function startArena() {
   if (app.arena) { app.arena.stop(); app.arena = null; }
@@ -93,7 +108,7 @@ function startArena() {
   stopPreview();
   $('#modal-root').innerHTML = '';
   setScreen('screen-game');
-  const arena = new Arena({ onReport: finishMatch });
+  const arena = new Arena({ onReport: finishMatch, mode: state.settings.mode });
   app.arena = arena;
   arena.start();
 }

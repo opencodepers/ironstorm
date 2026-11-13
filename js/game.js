@@ -6,7 +6,8 @@ import { img } from './assets.js';
 import { audio } from './audio.js';
 import { state } from './store.js';
 import { connectArena } from './net.js';
-import { TANKS, TANK_ORDER, deriveStats } from './tanks.js';
+import { TANKS, TANK_ORDER, deriveStats, skinCss } from './tanks.js';
+import { modeFor } from './modes.js';
 import { WORLD, PALETTE, NET } from './config.js';
 import {
   clamp, lerp, rand, randInt, pick, dist, dist2, angleDiff, angleLerp,
@@ -38,9 +39,26 @@ const SPAWNS = [
 const TANK_FWD = (a) => ({ x: Math.sin(a), y: -Math.cos(a) });
 
 export class Arena {
-  constructor({ onExit, onReport }) {
+  constructor({ onExit, onReport, mode = 'deathmatch' } = {}) {
     this.onExit = onExit;
     this.onReport = onReport;
+    this.modeId = mode;
+    this.mode = modeFor(mode);
+    this.matchLen = this.mode.duration || 0;
+    this.remaining = this.mode.duration || 0;
+    this.ended = false;
+    this.result = null;
+    this.teamScore = [0, 0];
+    this.zonePts = [0, 0];
+    this.zone = null;
+    this.zoneHolder = -1;
+    this.zoneCounts = [0, 0];
+    this.wave = 0;
+    this.waveTimer = 0;
+    this.lives = this.mode.waves ? 3 : Infinity;
+    this.weather = pick(['clear', 'clear', 'clear', 'rain', 'fog', 'dusk']);
+    this.recentKills = [];
+    this.graveyard = [];
     this.canvas = $('#arena-canvas');
     this.ctx = this.canvas.getContext('2d');
     this.minimap = $('#hud-minimap');
@@ -56,6 +74,9 @@ export class Arena {
       pause: $('#hud-pause'), powers: $('#hud-powers'), chatLog: $('#hud-chat-log'),
       chatInput: $('#hud-chat-input'), chatWrap: $('#hud-chat'),
       announce: $('#hud-announce'),
+      mode: $('#hud-mode'), objective: $('#hud-objective'),
+      objectiveLabel: $('#hud-objective-label'), remaining: $('#hud-remaining'),
+      modebar: $('#hud-modebar'), medals: $('#hud-medals'), lives: $('#hud-lives'),
     };
 
     this.running = false;
@@ -87,6 +108,7 @@ export class Arena {
     this.cam = { x: WORLD.size / 2, y: WORLD.size / 2 };
     this.startAt = 0;
     this.stats = { kills: 0, deaths: 0, score: 0, bestStreak: 0, shots: 0, hits: 0 };
+    this.hud.modebar?.setAttribute('data-mode', this.modeId);
 
     this._bind();
   }
@@ -121,7 +143,7 @@ export class Arena {
     this.cam.y = this.me.y;
     this.tanks.push(this.me);
 
-    this.spawnBots(this.settings.bots ?? 6);
+    this.setupMode();
 
     this.hud.chatWrap?.classList.add('hidden');
     this.hud.pause?.classList.add('hidden');
@@ -147,15 +169,171 @@ export class Arena {
 
   report() {
     const s = this.stats;
-    const won = s.kills >= 3 && s.kills > s.deaths;
-    const credits = 30 + s.kills * 14 + (won ? 180 : 0) + Math.floor(s.score / 25);
-    const xp = 40 + s.kills * 22 + (won ? 120 : 0) + Math.floor(s.score / 60);
+    const won = this.result
+      ? this.result.won
+      : (this.mode.teams ? this.teamScore[0] > this.teamScore[1] : s.kills >= 3 && s.kills > s.deaths);
+    const mult = this.mode.reward || 1;
+    const credits = Math.round((30 + s.kills * 14 + (won ? 180 : 0) + Math.floor(s.score / 25)) * mult);
+    const xp = Math.round((40 + s.kills * 22 + (won ? 120 : 0) + Math.floor(s.score / 60)) * mult);
     const seconds = Math.max(1, Math.floor((performance.now() - this.startAt - 1) / 1000));
     return {
       kills: s.kills, deaths: s.deaths, score: s.score,
       bestStreak: s.bestStreak, seconds, won, credits, xp,
+      mode: this.mode.id, modeName: this.mode.name,
+      verdict: this.result?.label || null, wave: this.wave,
+      teamScore: this.teamScore.slice(),
       accuracy: s.shots ? Math.round((s.hits / s.shots) * 100) : 0,
     };
+  }
+
+  // ----------------------------------------------------------------
+  //  modes
+  // ----------------------------------------------------------------
+  setupMode() {
+    const m = this.mode;
+    this.me.team = 0;
+    this.me.skin = state.profile.skin || 'olive';
+    if (m.zone) this.zone = { x: WORLD.size / 2, y: WORLD.size / 2, r: 235 };
+    if (this.hud.mode) this.hud.mode.textContent = m.name;
+    if (m.waves) {
+      this.nextWave();
+    } else {
+      this.spawnBots(this.settings.bots ?? m.bots, { teams: !!m.teams });
+      if (m.teams) this.balanceTeams();
+    }
+  }
+
+  balanceTeams() {
+    let a = 0, b = 0;
+    for (const t of this.tanks) {
+      if (!t.bot) continue;
+      if (a <= b) { t.team = 0; a += 1; } else { t.team = 1; b += 1; }
+    }
+  }
+
+  nextWave() {
+    this.wave += 1;
+    const count = 3 + this.wave * 2;
+    const hpScale = 1 + (this.wave - 1) * 0.14;
+    const dmgScale = 1 + (this.wave - 1) * 0.07;
+    const names = BOT_NAMES.slice().sort(() => Math.random() - 0.5);
+    for (let i = 0; i < count; i++) {
+      const tankId = pick(['crusader', 't34', 'panther', 'tiger', 'is2', 'leopard']);
+      const base = deriveStats(tankId, {});
+      const stats = {
+        ...base,
+        hp: Math.round(base.hp * hpScale),
+        damage: base.damage * dmgScale,
+        reload: base.reload * 1.3,
+      };
+      const spot = this.freeSpot(560);
+      const b = this.makeTank({
+        uid: 'bot:w' + this.wave + ':' + i + ':' + Math.random().toString(36).slice(2, 6),
+        name: names[i % names.length],
+        stats, level: 1 + this.wave, bot: true, team: 1,
+        color: '#c46a5a',
+        x: spot.x, y: spot.y,
+      });
+      b.hp = b.maxHp;
+      b.noRespawn = true;
+      this.tanks.push(b);
+    }
+    this.announce('WAVE ' + this.wave + ' — ' + count + ' HOSTILES', 1900);
+    this.medal('WAVE ' + this.wave, count + ' HOSTILES INBOUND');
+  }
+
+  updateMode(dt) {
+    if (this.ended) return;
+    const m = this.mode;
+
+    if (m.duration) {
+      this.remaining = Math.max(0, this.matchLen - this.t);
+      if (this.remaining <= 0) { this.finishByTime(); return; }
+    }
+
+    if (m.zone && this.zone) {
+      const z = this.zone;
+      const counts = [0, 0];
+      for (const t of this.tanks) {
+        if (t.alive && dist2(t.x, t.y, z.x, z.y) < z.r * z.r) counts[t.team || 0] += 1;
+      }
+      const holder = counts[0] === counts[1] ? -1 : counts[0] > counts[1] ? 0 : 1;
+      this.zoneHolder = holder;
+      this.zoneCounts = counts;
+      if (holder >= 0) this.zonePts[holder] += dt * (7 + Math.max(0, counts[holder] - 1) * 3);
+      if (this.zonePts[0] >= m.target) { this.endMatch(true, 'ZONE SECURED'); return; }
+      if (this.zonePts[1] >= m.target) { this.endMatch(false, 'ZONE LOST'); return; }
+    }
+
+    if (m.waves) {
+      const alive = this.tanks.reduce((n, t) => n + (t.bot && t.alive ? 1 : 0), 0);
+      if (alive === 0) {
+        if (this.waveTimer <= 0) {
+          this.waveTimer = 3.5;
+          this.announce('SECTOR CLEAR — NEXT WAVE INBOUND', 1700);
+        }
+        this.waveTimer -= dt;
+        if (this.waveTimer <= 0) { this.waveTimer = 0; this.nextWave(); }
+      }
+    }
+
+    if (m.teams && !m.zone) {
+      if (this.teamScore[0] >= m.target) { this.endMatch(true, 'SQUADRON VICTORY'); return; }
+      if (this.teamScore[1] >= m.target) { this.endMatch(false, 'SQUADRON DEFEAT'); return; }
+    } else if (!m.teams && m.target) {
+      const leader = this.tanks.reduce((best, t) => (t.kills > (best?.kills ?? -1) ? t : best), null);
+      if (this.me.kills >= m.target) { this.endMatch(true, 'SECTOR SECURED'); return; }
+      if (leader && leader !== this.me && leader.kills >= m.target) { this.endMatch(false, 'SECTOR LOST'); return; }
+    }
+
+    if (this.graveyard.length) {
+      this.graveyard = this.graveyard.filter((g) => {
+        if (this.t < g.at) return true;
+        this.tanks = this.tanks.filter((x) => x !== g.tank);
+        return false;
+      });
+    }
+  }
+
+  finishByTime() {
+    const m = this.mode;
+    if (m.teams) {
+      const win = this.teamScore[0] > this.teamScore[1];
+      this.endMatch(win, win ? 'SQUADRON VICTORY' : 'SQUADRON DEFEAT');
+      return;
+    }
+    const best = this.tanks.reduce((n, t) => Math.max(n, t.kills), 0);
+    const win = this.me.kills >= best && this.me.kills > 0;
+    this.endMatch(win, win ? 'SECTOR SECURED' : 'SECTOR LOST');
+  }
+
+  endMatch(won, label) {
+    if (this.ended) return;
+    this.ended = true;
+    this.result = { won: !!won, label: label || (won ? 'VICTORY' : 'DEFEAT') };
+    this.input.firing = false;
+    this.announce(this.result.label, 2600);
+    this.medal(this.result.label, 'MATCH COMPLETE');
+    audio.play(won ? 'victory' : 'death');
+    clearTimeout(this._endTimer);
+    this._endTimer = setTimeout(() => this.leave(), 3000);
+  }
+
+  fmtTime(s) {
+    if (!this.mode.duration) return '∞';
+    const v = Math.max(0, Math.ceil(s));
+    return String(Math.floor(v / 60)).padStart(2, '0') + ':' + String(v % 60).padStart(2, '0');
+  }
+
+  medal(title, sub) {
+    const root = this.hud.medals;
+    if (!root) return;
+    const el = document.createElement('div');
+    el.className = 'medal';
+    el.innerHTML = `<b>${esc(title)}</b><span>${esc(sub || '')}</span>`;
+    root.appendChild(el);
+    setTimeout(() => el.classList.add('out'), 1800);
+    setTimeout(() => el.remove(), 2300);
   }
 
   // ----------------------------------------------------------------
@@ -266,9 +444,10 @@ export class Arena {
   // ----------------------------------------------------------------
   //  entities
   // ----------------------------------------------------------------
-  makeTank({ uid, name, stats, level, local = false, color, x = 0, y = 0, remote = false, bot = false }) {
+  makeTank({ uid, name, stats, level, local = false, color, x = 0, y = 0, remote = false, bot = false, team = 0, skin }) {
     return {
-      uid, name, stats, level, local, remote, bot,
+      uid, name, stats, level, local, remote, bot, team,
+      skin: skin || stats.skin || 'olive',
       color: color || pick(PALETTE),
       x, y, angle: 0, turret: 0, vx: 0, vy: 0,
       hp: stats.hp, maxHp: stats.hp,
@@ -283,7 +462,7 @@ export class Arena {
     };
   }
 
-  spawnBots(count) {
+  spawnBots(count, opts = {}) {
     const diff = clamp(0.72 + (this.me?.level || 1) * 0.012, 0.72, 0.95);
     // Distinct callsigns, farthest spawns from the player first.
     const names = BOT_NAMES.slice().sort(() => Math.random() - 0.5);
@@ -291,6 +470,7 @@ export class Arena {
       (a, b) => dist2(b.x, b.y, this.me.x, this.me.y) - dist2(a.x, a.y, this.me.x, this.me.y)
     );
     for (let i = 0; i < count; i++) {
+      const team = opts.teams ? (i % 2 === 0 ? 1 : 0) : 0;
       const tankId = pick(['sherman', 'crusader', 't34', 'panther', 'tiger']);
       const base = deriveStats(tankId, {});
       const stats = {
@@ -303,7 +483,7 @@ export class Arena {
       const b = this.makeTank({
         uid: 'bot:' + i + ':' + Math.random().toString(36).slice(2, 7),
         name: names[i % names.length],
-        stats, level: randInt(1, 9), bot: true,
+        stats, level: randInt(1, 9), bot: true, team,
         color: PALETTE[(i + 1) % PALETTE.length],
         x: spot.x + rand(90, -90), y: spot.y + rand(90, -90),
       });
@@ -366,6 +546,8 @@ export class Arena {
     t = this.makeTank({
       uid, name: meta.name || 'UNKNOWN', stats,
       level: meta.level || 1, remote: true,
+      team: this.mode.teams ? ((uid.charCodeAt(0) || 0) % 2) : 0,
+      skin: meta.skin || 'olive',
       color: PALETTE[(uid.length * 7) % PALETTE.length],
       x: spot.x, y: spot.y,
     });
@@ -392,6 +574,8 @@ export class Arena {
     t.hp = s.h; t.maxHp = s.mh || t.maxHp;
     t.kills = s.k ?? t.kills; t.score = s.s ?? t.score;
     t.name = s.n || t.name; t.level = s.l ?? t.level;
+    if (s.sk) t.skin = s.sk;
+    if (s.tm != null) t.team = s.tm;
     t.lastSeen = performance.now();
     if (t.hp > 0 && !t.alive) this.reviveRemote(t);
   }
@@ -675,6 +859,7 @@ export class Arena {
         if (dead) break;
         for (const t of this.tanks) {
           if (t === b.owner || !t.alive || t.invuln > this.t) continue;
+          if (this.mode.teams && t.team === b.owner.team) continue;
           const rr = t.stats.radius + b.r;
           if (dist2(b.x, b.y, t.x, t.y) < rr * rr) {
             dead = true;
@@ -746,9 +931,11 @@ export class Arena {
         a: +me.angle.toFixed(2), tu: +me.turret.toFixed(2),
         h: Math.round(me.hp), mh: Math.round(me.maxHp),
         k: this.stats.kills, s: this.stats.score,
+        sk: me.skin, tm: me.team, mo: this.modeId,
       });
     }
 
+    this.updateMode(dt);
     this.updateHud();
   }
 
@@ -888,10 +1075,19 @@ export class Arena {
       t.respawnT = 3.2;
       this.shake = 16 * this.settings.shake;
       t.vx = t.vy = 0;
+      if (this.mode.waves) {
+        this.lives -= 1;
+        if (this.lives <= 0) this.endMatch(false, 'OVERRUN');
+      }
     }
     if (t.bot) {
       this.feed(`<b>${esc(from?.name || 'YOU')}</b> destroyed <b>${esc(t.name)}</b>`, '#c9d6bd');
-      t.respawnT = rand(4.5, 2.5);
+      if (this.mode.waves) {
+        t.respawnT = 1e9;
+        this.graveyard.push({ tank: t, at: this.t + 1.6 });
+      } else {
+        t.respawnT = rand(4.5, 2.5);
+      }
       if (credit) this.creditKill(from, t.name);
     }
   }
@@ -904,12 +1100,21 @@ export class Arena {
     const gain = Math.round(100 * mult);
     killer.score += gain;
     killer.kills++;
+    if (this.mode.teams) this.teamScore[killer.team || 0] += 1;
     if (killer.local) {
       this.stats.kills++;
       this.stats.score += gain;
       this.stats.bestStreak = Math.max(this.stats.bestStreak, killer.streak);
       this.floater(killer.x, killer.y - 60, '+' + gain, '#8fbf5e');
       if (killer.streak >= 3) this.announce(`${killer.streak} KILL STREAK`, 1200);
+
+      const now = performance.now();
+      this.recentKills = this.recentKills.filter((x) => now - x < 3200);
+      this.recentKills.push(now);
+      const n = this.recentKills.length;
+      if (n === 2) this.medal('DOUBLE KILL', 'TWO IN THREE SECONDS');
+      else if (n === 3) this.medal('TRIPLE KILL', 'RAMPAGE');
+      else if (n >= 4) { this.medal('MULTI KILL', 'UNSTOPPABLE'); this.recentKills = []; }
     }
   }
 
@@ -924,11 +1129,22 @@ export class Arena {
     this.shake = 16 * this.settings.shake;
     me.respawnT = 3.2;
     this.hud.respawn?.classList.remove('hidden');
+    if (this.mode.waves) {
+      this.lives -= 1;
+      if (this.lives <= 0) this.endMatch(false, 'OVERRUN');
+    }
     if (killerName) this.feed(`<b>${esc(killerName)}</b> destroyed <b>YOU</b>`, '#e0806a');
   }
 
   respawn(t) {
-    const spot = this.freeSpot(420);
+    let spot;
+    if (this.mode.teams) {
+      const pool = SPAWNS.filter((s) => (s.x > WORLD.size / 2 ? 1 : 0) === (t.team ? 1 : 0));
+      const base = pick(pool.length ? pool : SPAWNS);
+      spot = { x: base.x + rand(140, -140), y: base.y + rand(140, -140) };
+    } else {
+      spot = this.freeSpot(420);
+    }
     t.x = spot.x; t.y = spot.y;
     t.vx = t.vy = 0;
     t.hp = t.maxHp;
@@ -1010,6 +1226,8 @@ export class Arena {
       let best = null, bd = 1e9;
       for (const t of this.tanks) {
         if (t === b || !t.alive) continue;
+        if (this.mode.waves && t !== this.me) continue;
+        if (this.mode.teams && t.team === b.team) continue;
         const d = dist2(b.x, b.y, t.x, t.y);
         if (d < bd) { bd = d; best = t; }
       }
@@ -1234,6 +1452,25 @@ export class Arena {
       this.hud.timer.textContent =
         String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
     }
+
+    // ---- mode objective + match clock
+    if (this.hud.remaining) this.hud.remaining.textContent = this.fmtTime(this.remaining);
+    if (this.hud.objective) {
+      const m = this.mode;
+      let val, label;
+      if (m.zone) { val = `${Math.floor(this.zonePts[0])} : ${Math.floor(this.zonePts[1])}`; label = 'ZONE PTS'; }
+      else if (m.teams) { val = `${this.teamScore[0]} : ${this.teamScore[1]}`; label = 'TEAM KILLS'; }
+      else if (m.waves) { val = `WAVE ${this.wave}`; label = `${this.stats.kills} KILLS`; }
+      else { val = `${this.me.kills} / ${m.target}`; label = 'KILLS'; }
+      this.hud.objective.textContent = val;
+      if (this.hud.objectiveLabel) this.hud.objectiveLabel.textContent = label;
+    }
+    if (this.hud.lives) {
+      this.hud.lives.textContent = this.mode.waves
+        ? 'LIVES ' + '◆'.repeat(Math.max(0, this.lives))
+        : '';
+      this.hud.lives.classList.toggle('danger', this.mode.waves && this.lives <= 1);
+    }
   }
 
   renderBoard() {
@@ -1286,6 +1523,7 @@ export class Arena {
 
     this.drawGround(ctx);
     this.drawDecals(ctx);
+    if (this.zone) this.drawZone(ctx);
 
     // collect drawables for y-sorting
     const drawables = [];
@@ -1309,6 +1547,7 @@ export class Arena {
     ctx.restore();
 
     this.drawVignette(ctx);
+    this.drawWeather(ctx);
     if (this.me && !this.me.alive) this.drawDeathOverlay(ctx);
   }
 
@@ -1479,6 +1718,8 @@ export class Arena {
     if (t.invuln > this.t) ctx.globalAlpha = 0.55 + Math.sin(this.t * 20) * 0.25;
     ctx.translate(t.x, t.y);
     ctx.rotate(t.angle);
+    const sk = t.skin ? skinCss(t.skin) : 'none';
+    if (sk && sk !== 'none') ctx.filter = sk;
     ctx.drawImage(body, -bw / 2, -bh / 2, bw, bh);
     ctx.restore();
 
@@ -1487,6 +1728,7 @@ export class Arena {
       ctx.save();
       ctx.translate(t.x, t.y);
       ctx.rotate(t.turret);
+      if (sk && sk !== 'none') ctx.filter = sk;
       ctx.drawImage(barrel, -brw / 2, -brh + bh * 0.12, brw, brh);
       // muzzle glow
       if (t.muzzle > 0) {
@@ -1547,7 +1789,9 @@ export class Arena {
       if (!t.alive) continue;
       const y = t.y - (t.stats.radius || 30) - 40;
       ctx.font = 'bold 12px "Courier New", monospace';
-      ctx.fillStyle = t.local ? '#d8f0c0' : t.remote ? '#9ee0ff' : '#e2d7bf';
+      ctx.fillStyle = t.local ? '#d8f0c0'
+        : this.mode.teams ? (t.team === 0 ? '#a8e88a' : '#e68e78')
+        : t.remote ? '#9ee0ff' : '#e2d7bf';
       ctx.globalAlpha = 0.95;
       const label = t.local ? t.name + ' (YOU)' : t.name;
       ctx.fillText(label, t.x, y);
@@ -1635,6 +1879,91 @@ export class Arena {
     ctx.lineWidth = 3;
     ctx.strokeRect(2, 2, WORLD.size - 4, WORLD.size - 4);
     ctx.restore();
+  }
+
+  drawZone(ctx) {
+    const z = this.zone;
+    if (!z) return;
+    const holder = this.zoneHolder;
+    const col = holder === 0 ? '#8fe86b' : holder === 1 ? '#e0685a' : '#e8c96a';
+    const pulse = 0.5 + Math.sin(this.t * 2.2) * 0.5;
+
+    ctx.save();
+    ctx.translate(z.x, z.y);
+
+    const g = ctx.createRadialGradient(0, 0, z.r * 0.15, 0, 0, z.r);
+    g.addColorStop(0, 'rgba(110, 170, 70, 0.07)');
+    g.addColorStop(1, 'rgba(20, 40, 15, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, z.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = col;
+    ctx.globalAlpha = 0.28 + pulse * 0.22;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([18, 14]);
+    ctx.lineDashOffset = -this.t * 30;
+    ctx.beginPath();
+    ctx.arc(0, 0, z.r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.5 + pulse * 0.3;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, z.r * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    ctx.moveTo(-20, 0); ctx.lineTo(20, 0);
+    ctx.moveTo(0, -20); ctx.lineTo(0, 20);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawWeather(ctx) {
+    const { vw, vh } = this;
+    if (this.weather === 'rain') {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(185, 210, 200, 0.20)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < 150; i++) {
+        const x = ((i * 137 + this.t * 420) % (vw + 240)) - 120;
+        const y = ((i * 83 + this.t * 1100) % (vh + 120)) - 60;
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 5, y + 22);
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(18, 28, 24, 0.12)';
+      ctx.fillRect(0, 0, vw, vh);
+      ctx.restore();
+      return;
+    }
+    if (this.weather === 'fog') {
+      ctx.save();
+      const band = (Math.sin(this.t * 0.12) + 1) * 0.5;
+      const g = ctx.createLinearGradient(0, 0, 0, vh);
+      g.addColorStop(0, 'rgba(175, 195, 175, 0.10)');
+      g.addColorStop(0.35 + band * 0.15, 'rgba(195, 210, 195, 0.17)');
+      g.addColorStop(1, 'rgba(150, 170, 150, 0.05)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, vw, vh);
+      ctx.restore();
+      return;
+    }
+    if (this.weather === 'dusk') {
+      ctx.save();
+      const g = ctx.createLinearGradient(0, 0, vw, vh);
+      g.addColorStop(0, 'rgba(255, 150, 60, 0.10)');
+      g.addColorStop(0.5, 'rgba(180, 90, 40, 0.05)');
+      g.addColorStop(1, 'rgba(40, 20, 60, 0.18)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, vw, vh);
+      ctx.restore();
+    }
   }
 
   drawVignette(ctx) {

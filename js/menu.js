@@ -2,8 +2,16 @@
 //  IronStorm — main menu, hangar, upgrades, leaderboards, settings
 // ------------------------------------------------------------------
 
-import { state, saveSettings, equipTankLocal, buyTankLocal, buyUpgradeLocal } from './store.js';
-import { TANKS, TANK_ORDER, UPGRADES, UPGRADE_ORDER, upgradeCost, deriveStats, levelProgress } from './tanks.js';
+import {
+  state, saveSettings, equipTankLocal, buyTankLocal, buyUpgradeLocal,
+  buySkinLocal, equipSkinLocal, claimDailyLocal, dailyState,
+} from './store.js';
+import {
+  TANKS, TANK_ORDER, UPGRADES, UPGRADE_ORDER, upgradeCost, deriveStats, levelProgress,
+  SKINS, SKIN_ORDER, skinCss, skinFor,
+} from './tanks.js';
+import { MODES, MODE_ORDER } from './modes.js';
+import { selectedMode, setMode } from './landing.js';
 import { audio } from './audio.js';
 import { img } from './assets.js';
 import { fmt, esc, $, $$, clamp, storage } from './util.js';
@@ -32,6 +40,8 @@ export const ICONS = {
   user: svg('<circle cx="12" cy="8.2" r="3.6"/><path d="M4.8 20.2c1.3-3.6 4-5.4 7.2-5.4s5.9 1.8 7.2 5.4"/>'),
   skull: svg('<path d="M12 3a7 7 0 0 0-4.2 12.6V19h8.4v-3.4A7 7 0 0 0 12 3z"/><circle cx="9.2" cy="11" r="1.4" fill="currentColor" stroke="none"/><circle cx="14.8" cy="11" r="1.4" fill="currentColor" stroke="none"/><path d="M9.6 19v2M14.4 19v2"/>'),
   target: svg('<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>'),
+  cart: svg('<path d="M2.6 4.2h2.6l2.5 10.4h9.4l2.1-7.4H7"/><circle cx="9.4" cy="19" r="1.5"/><circle cx="17.4" cy="19" r="1.5"/>'),
+  crate: svg('<path d="M3 7.6 12 3l9 4.6v8.8L12 21l-9-4.6z"/><path d="M3 7.6 12 12.2l9-4.6M12 12.2V21"/>'),
 };
 
 // ---------------------------------------------------------------- state
@@ -39,10 +49,12 @@ let onPlay = null;
 let currentPane = null;
 let previewRaf = 0;
 let leaderMetric = 'kills';
+let shopTab = 'vehicles';
 
 const PANE_META = {
   upgrades: { title: 'UPGRADES', sub: 'Spend credits on permanent hull improvements' },
   garage: { title: 'GARAGE', sub: 'Select and requisition armoured vehicles' },
+  shop: { title: 'SHOP', sub: 'Vehicles, camouflage patterns and daily supply drops' },
   leaderboards: { title: 'LEADERBOARDS', sub: 'Global rankings of the Iron Corps' },
   gameplay: { title: 'GAMEPLAY', sub: 'Audio, controls and account settings' },
 };
@@ -67,6 +79,13 @@ export function initMenu({ onPlay: play }) {
 
   document.addEventListener('keydown', (e) => {
     if (currentPane && e.key === 'Escape') { audio.play('uiBack'); closePane(); }
+  });
+
+  document.addEventListener('ironstorm:mode', () => {
+    renderModeStrip();
+    const m = selectedMode();
+    const sub = $('#play-sub');
+    if (sub) sub.textContent = `${m.name} · ${m.rules}`;
   });
 }
 
@@ -130,10 +149,12 @@ export function refreshMenu() {
     statLabel.textContent = `${Math.round(stats.damage)} DMG · ${Math.round(stats.hp)} HP · ${Math.round(stats.speed)} SPD`;
   }
 
+  renderModeStrip();
+
   const playSub = $('#play-sub');
   if (playSub) {
-    const bots = state.settings.bots ?? 6;
-    playSub.textContent = `QUICK MATCH · ${bots} BOTS · GLOBAL ARENA`;
+    const m = selectedMode();
+    playSub.textContent = `${m.name} · ${m.rules}`;
   }
 
   const accBtn = $('#account-chip');
@@ -142,6 +163,20 @@ export function refreshMenu() {
       ? `${ICONS.user}<span>${esc(p.username)}</span>`
       : `${ICONS.user}<span>SIGN IN</span>`;
   }
+}
+
+function renderModeStrip() {
+  const wrap = $('#menu-modes');
+  if (!wrap) return;
+  const active = selectedMode().id;
+  wrap.innerHTML = MODE_ORDER.map((id) => {
+    const m = MODES[id];
+    return `<button class="mode-chip ${id === active ? 'on' : ''}" data-mode="${id}" style="--accent:${m.accent}">
+      <span>${m.name}</span><i>${m.rules}</i>
+    </button>`;
+  }).join('');
+  wrap.querySelectorAll('[data-mode]').forEach((b) =>
+    b.addEventListener('click', () => { audio.play('ui'); setMode(b.dataset.mode); }));
 }
 
 function setBar(id, pct) {
@@ -206,9 +241,13 @@ export function startPreview() {
     ctx.restore();
 
     // hull
+    const skf = skinCss(p.skin || 'olive');
+    const hasSkin = skf && skf !== 'none';
+
     ctx.save();
     ctx.translate(cx, cy + bob);
     ctx.rotate(-0.05 + Math.sin(t * 0.6) * 0.015);
+    if (hasSkin) ctx.filter = skf;
     ctx.drawImage(body, -bw / 2, -bh / 2, bw, bh);
     ctx.restore();
 
@@ -219,6 +258,7 @@ export function startPreview() {
       ctx.translate(cx, cy + bob);
       ctx.rotate(ang);
       const brw = barrel.width * s, brh = barrel.height * s;
+      if (hasSkin) ctx.filter = skf;
       ctx.drawImage(barrel, -brw / 2, -brh + bh * 0.12, brw, brh);
       ctx.restore();
     }
@@ -266,6 +306,7 @@ function renderPane() {
     garage: renderGarage,
     leaderboards: renderLeaderboards,
     gameplay: renderGameplay,
+    shop: renderShop,
   }[currentPane]?.() ?? '';
 
   root.innerHTML = `
@@ -289,6 +330,7 @@ function renderPane() {
 
   wirePane();
   if (currentPane === 'leaderboards') loadLeaderboard();
+  requestAnimationFrame(paintGaragePreviews);
 }
 
 function wirePane() {
@@ -316,6 +358,22 @@ function wirePane() {
   if (currentPane === 'gameplay') {
     wireGameplay();
   }
+  if (currentPane === 'shop') {
+    root.querySelectorAll('[data-shop-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        shopTab = btn.dataset.shopTab;
+        audio.play('ui');
+        rerenderPaneBody();
+      });
+    });
+    root.querySelectorAll('[data-tank]').forEach((btn) => {
+      btn.addEventListener('click', () => doTank(btn.dataset.tank, btn));
+    });
+    root.querySelectorAll('[data-skin]').forEach((btn) => {
+      btn.addEventListener('click', () => doSkin(btn.dataset.skin, btn));
+    });
+    document.getElementById('daily-claim')?.addEventListener('click', (e) => doDaily(e.currentTarget));
+  }
 }
 
 function rerenderPaneBody() {
@@ -325,6 +383,7 @@ function rerenderPaneBody() {
     garage: renderGarage,
     leaderboards: renderLeaderboards,
     gameplay: renderGameplay,
+    shop: renderShop,
   }[currentPane]?.() ?? '';
   const holder = root.querySelector('.pane-body');
   if (holder) holder.innerHTML = body;
@@ -332,6 +391,8 @@ function rerenderPaneBody() {
   if (pc) pc.textContent = fmt(state.profile.credits);
   wirePane();
   if (currentPane === 'leaderboards') loadLeaderboard();
+  requestAnimationFrame(paintGaragePreviews);
+  if (currentPane === 'shop') requestAnimationFrame(paintSkinPreviews);
 }
 
 // ---- upgrades ----------------------------------------------------
@@ -472,6 +533,37 @@ function paintGaragePreviews() {
   });
 }
 
+function paintSkinPreviews() {
+  $$('[data-skin-preview]').forEach((c) => {
+    const t = TANKS[c.dataset.tank] || TANKS.sherman;
+    const ctx = c.getContext('2d');
+    const W = 240, H = 118;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = W * dpr; c.height = H * dpr;
+    c.style.width = W + 'px'; c.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    const body = img(t.body), barrel = img(t.barrel);
+    if (!body) return;
+    const s = 1.45;
+    const bw = body.width * s, bh = body.height * s;
+    ctx.save();
+    ctx.translate(W / 2, H * 0.66);
+    ctx.rotate(-0.05);
+    ctx.drawImage(body, -bw / 2, -bh / 2, bw, bh);
+    ctx.restore();
+    if (barrel) {
+      ctx.save();
+      ctx.translate(W / 2, H * 0.66);
+      ctx.rotate(-0.48);
+      const brw = barrel.width * s, brh = barrel.height * s;
+      ctx.drawImage(barrel, -brw / 2, -brh + bh * 0.12, brw, brh);
+      ctx.restore();
+    }
+    c.style.filter = skinCss(c.dataset.skinPreview);
+  });
+}
+
 async function doTank(id, btn) {
   const p = state.profile;
   const t = TANKS[id];
@@ -513,6 +605,142 @@ async function doTank(id, btn) {
   } else {
     audio.play('deny');
     toast(res.why, 'bad');
+  }
+}
+
+// ---- shop --------------------------------------------------------
+function countdown(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function renderShop() {
+  const tabs = [['vehicles', 'VEHICLES'], ['camo', 'CAMO'], ['supply', 'SUPPLY']];
+  const body = shopTab === 'camo' ? renderCamo() : shopTab === 'supply' ? renderSupply() : renderShopVehicles();
+  return `<div class="shop-tabs">${tabs.map(([k, l]) =>
+    `<button class="shop-tab ${shopTab === k ? 'on' : ''}" data-shop-tab="${k}">${l}</button>`).join('')}</div>${body}`;
+}
+
+function renderShopVehicles() {
+  const p = state.profile;
+  return `<div class="shop-grid">${TANK_ORDER.map((id) => {
+    const t = TANKS[id];
+    const owned = p.owned.includes(id);
+    const equipped = p.tank === id;
+    const locked = p.level < t.unlock;
+    const price = state.catalog[id]?.price ?? t.price;
+    const btn = equipped
+      ? `<button class="sc-buy done" disabled>EQUIPPED</button>`
+      : owned
+        ? `<button class="sc-buy" data-tank="${id}">EQUIP</button>`
+        : locked
+          ? `<button class="sc-buy locked" disabled>LVL ${t.unlock}</button>`
+          : `<button class="sc-buy" data-tank="${id}">${ICONS.coin}${fmt(price)}</button>`;
+    return `<article class="shop-card ${owned ? 'owned' : ''} ${equipped ? 'equipped' : ''}">
+      <div class="sc-top"><h3>${t.name}</h3><span class="sc-rarity">${t.klass}</span></div>
+      <div class="sc-swatch"><canvas data-tank-preview="${id}" width="264" height="156"></canvas></div>
+      <p class="sc-blurb">${t.blurb}</p>
+      <div class="sc-foot">
+        <span class="sc-note">${owned ? 'IN INVENTORY' : locked ? 'REQUIRES LEVEL ' + t.unlock : fmt(price) + ' CR'}</span>
+        ${btn}
+      </div>
+    </article>`;
+  }).join('')}</div>`;
+}
+
+function renderCamo() {
+  const p = state.profile;
+  const tank = TANKS[p.tank] || TANKS.sherman;
+  return `<div class="shop-grid">${SKIN_ORDER.map((id) => {
+    const s = SKINS[id];
+    const owned = p.ownedSkins.includes(id);
+    const active = p.skin === id;
+    const locked = p.level < s.unlock;
+    const btn = active
+      ? `<button class="sc-buy done" disabled>ACTIVE</button>`
+      : owned
+        ? `<button class="sc-buy" data-skin="${id}">APPLY</button>`
+        : locked
+          ? `<button class="sc-buy locked" disabled>LVL ${s.unlock}</button>`
+          : `<button class="sc-buy" data-skin="${id}">${ICONS.coin}${fmt(s.price)}</button>`;
+    return `<article class="shop-card ${owned ? 'owned' : ''} ${active ? 'equipped' : ''}">
+      <div class="sc-top"><h3>${s.name}</h3><span class="sc-rarity ${s.rarity.toLowerCase()}">${s.rarity}</span></div>
+      <div class="sc-swatch"><canvas data-skin-preview="${id}" data-tank="${tank.id}" width="264" height="156"></canvas></div>
+      <p class="sc-blurb">${s.blurb}</p>
+      <div class="sc-foot">
+        <span class="sc-note">${owned ? (active ? 'EQUIPPED' : 'OWNED') : locked ? 'REQUIRES LEVEL ' + s.unlock : fmt(s.price) + ' CR'}</span>
+        ${btn}
+      </div>
+    </article>`;
+  }).join('')}</div>`;
+}
+
+function renderSupply() {
+  const d = dailyState();
+  return `<div class="daily-card">
+    <div class="daily-crate ${d.ready ? 'ready' : ''}">${ICONS.crate}</div>
+    <div class="daily-copy">
+      <h3>SUPPLY DROP</h3>
+      <p>One free requisition crate every 20 hours. Credits go straight into your field account and can be spent on vehicles, camouflage or upgrades.</p>
+      <div class="daily-timer">${d.ready ? 'CRATE READY TO OPEN' : 'NEXT CRATE IN ' + countdown(d.msLeft)}</div>
+    </div>
+    <button class="sc-buy ${d.ready ? '' : 'locked'}" id="daily-claim" ${d.ready ? '' : 'disabled'}>
+      ${ICONS.crate}<span>${d.ready ? 'OPEN' : 'LOCKED'}</span>
+    </button>
+  </div>`;
+}
+
+async function doSkin(id, btn) {
+  const s = SKINS[id];
+  if (!s) return;
+  btn?.classList.add('busy');
+  const owned = state.profile.ownedSkins.includes(id);
+  let res;
+  if (state.mode === 'account') {
+    const r = owned ? await net.equipSkin(id) : await net.buySkin(id);
+    if (r.ok) { state.profile = fromRowLocal(r.row); res = { ok: true }; }
+    else res = { ok: false, why: r.error };
+  } else if (owned) {
+    res = equipSkinLocal(id) ? { ok: true } : { ok: false, why: 'Unavailable' };
+  } else {
+    res = buySkinLocal(id);
+  }
+  btn?.classList.remove('busy');
+  if (res.ok) {
+    audio.play(owned ? 'ui' : 'buy');
+    refreshMenu();
+    rerenderPaneBody();
+    toast(owned ? `${s.name} applied` : `${s.name} unlocked`, 'good');
+  } else {
+    audio.play('deny');
+    toast(res.why || 'Unavailable', 'bad');
+  }
+}
+
+async function doDaily(btn) {
+  if (!btn || btn.disabled) return;
+  btn.classList.add('busy');
+  let res;
+  if (state.mode === 'account') {
+    const r = await net.claimDaily();
+    if (r.ok) {
+      if (r.row) state.profile = fromRowLocal(r.row);
+      res = { ok: true, reward: r.reward };
+    } else res = { ok: false, why: r.error };
+  } else {
+    res = claimDailyLocal();
+  }
+  btn.classList.remove('busy');
+  if (res.ok) {
+    audio.play('buy');
+    refreshMenu();
+    rerenderPaneBody();
+    toast(`Supply crate: +${fmt(res.reward || 0)} credits`, 'good');
+  } else {
+    audio.play('deny');
+    toast(res.why || 'Crate unavailable', 'bad');
   }
 }
 
@@ -758,8 +986,11 @@ export function showReport(data) {
     <div class="modal-backdrop"></div>
     <div class="report ${win ? 'win' : ''}">
       <div class="report-head">
-        <h2>BATTLE REPORT</h2>
-        <span class="report-verdict">${win ? 'VICTORY' : 'SURVIVED'}</span>
+        <div>
+          <h2>BATTLE REPORT</h2>
+          <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
+        </div>
+        <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
       </div>
       <div class="report-stats">
         ${rstat('KILLS', data.kills)}
@@ -821,6 +1052,9 @@ function fromRowLocal(row) {
     tank: row.tank_id || 'sherman',
     owned: row.owned_tanks?.length ? row.owned_tanks : ['sherman'],
     upgrades: row.upgrades || { engine: 0, armor: 0, firepower: 0, reload: 0, tracks: 0 },
+    skin: row.skin || 'olive',
+    ownedSkins: Array.isArray(row.owned_skins) && row.owned_skins.length ? row.owned_skins : ['olive'],
+    lastDaily: row.last_daily ? Date.parse(row.last_daily) || 0 : 0,
     kills: row.kills ?? 0,
     deaths: row.deaths ?? 0,
     matches: row.matches ?? 0,
