@@ -25,6 +25,7 @@ let clock = 0;
 let last = 0;
 let handlers = {};
 let tickerTimer = 0;
+const par = { x: 0, y: 0, tx: 0, ty: 0 };
 
 // ---------------------------------------------------------------- api
 export function initLanding(opts = {}) {
@@ -66,6 +67,7 @@ export function showLanding() {
   screen.classList.remove('hidden');
   running = true;
   resize();
+  bindParallax();
   last = performance.now();
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(loop);
@@ -230,6 +232,33 @@ function loop(now) {
   clock += dt;
   updateScene(dt);
   drawScene();
+  applyParallax();
+}
+
+function bindParallax() {
+  const screen = $('#screen-landing');
+  if (!screen || screen._par) return;
+  screen._par = true;
+  screen.addEventListener('pointermove', (e) => {
+    par.tx = (e.clientX / window.innerWidth - 0.5) * 2;
+    par.ty = (e.clientY / window.innerHeight - 0.5) * 2;
+  });
+  screen.addEventListener('pointerleave', () => { par.tx = 0; par.ty = 0; });
+}
+
+function applyParallax() {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  par.x += (par.tx - par.x) * 0.06;
+  par.y += (par.ty - par.y) * 0.06;
+  if (canvas) {
+    canvas.style.transform =
+      `translate3d(${(-par.x * 14).toFixed(2)}px, ${(-par.y * 9).toFixed(2)}px, 0) scale(1.045)`;
+  }
+  const hero = document.querySelector('.hero');
+  if (hero) {
+    hero.style.transform =
+      `translate3d(${(par.x * 6).toFixed(2)}px, ${(par.y * 4).toFixed(2)}px, 0)`;
+  }
 }
 
 function updateScene(dt) {

@@ -127,7 +127,9 @@ export function refreshMenu() {
   }
 
   const cred = $('#menu-credits');
-  if (cred) cred.textContent = fmt(p.credits);
+  if (cred) {
+    tweenCredits(cred, p.credits);
+  }
 
   const tank = TANKS[p.tank] || TANKS.sherman;
   const nameTank = $('#menu-tank-name');
@@ -177,6 +179,27 @@ function renderModeStrip() {
   }).join('');
   wrap.querySelectorAll('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => { audio.play('ui'); setMode(b.dataset.mode); }));
+}
+
+let creditShown = null;
+let creditRaf = 0;
+function tweenCredits(el, value) {
+  const from = creditShown == null ? value : creditShown;
+  if (from === value) { el.textContent = fmt(value); return; }
+  creditShown = value;
+  el.classList.remove('bump');
+  void el.offsetWidth;
+  el.classList.add('bump');
+  cancelAnimationFrame(creditRaf);
+  const t0 = performance.now();
+  const tick = (now) => {
+    const k = clamp((now - t0) / 420, 0, 1);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(from + (value - from) * e);
+    if (k < 1) creditRaf = requestAnimationFrame(tick);
+    else { creditShown = value; el.textContent = fmt(value); }
+  };
+  creditRaf = requestAnimationFrame(tick);
 }
 
 function setBar(id, pct) {
@@ -293,9 +316,15 @@ export function openPane(name) {
 }
 
 export function closePane() {
+  const root = $('#pane-root');
+  if (!root || root.classList.contains('hidden') || root.classList.contains('closing')) return;
   currentPane = null;
-  $('#pane-root').classList.add('hidden');
-  $('#pane-root').innerHTML = '';
+  root.classList.add('closing');
+  setTimeout(() => {
+    root.classList.remove('closing');
+    root.classList.add('hidden');
+    root.innerHTML = '';
+  }, 190);
 }
 
 function renderPane() {

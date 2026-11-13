@@ -109,6 +109,10 @@ export class Arena {
     this.startAt = 0;
     this.stats = { kills: 0, deaths: 0, score: 0, bestStreak: 0, shots: 0, hits: 0 };
     this.hud.modebar?.setAttribute('data-mode', this.modeId);
+    this.punch = 0;          // zoom punch (fire / kill)
+    this.hitstop = 0;        // brief freeze on a kill
+    this.hpShown = null;     // smoothed health for the HUD bar
+    this.aimS = { x: 0, y: 0 };
 
     this._bind();
   }
@@ -138,6 +142,7 @@ export class Arena {
       color: PALETTE[0],
     });
     this.me.invuln = 2.6;      // deploy shield
+    this.hpShown = this.me.maxHp;
     this.me.spawnFx = 0.8;
     this.cam.x = this.me.x;
     this.cam.y = this.me.y;
@@ -758,6 +763,14 @@ export class Arena {
   update(dt) {
     const me = this.me;
 
+    // game feel: a short freeze on kills, and slow motion while the match ends
+    if (this.hitstop > 0) {
+      this.hitstop -= dt;
+      dt *= 0.22;
+    } else if (this.ended) {
+      dt *= 0.45;
+    }
+
     // ---- local tank drive
     if (me.alive) {
       let ix = 0, iy = 0;
@@ -916,13 +929,36 @@ export class Arena {
       }
     }
 
-    // ---- camera (clamped to the arena so the void is never visible)
+    // ---- dust trails behind anything moving
+    for (const t of this.tanks) {
+      if (!t.alive) continue;
+      const sp = Math.hypot(t.vx, t.vy);
+      if (sp < 70) { t._dust = 0; continue; }
+      t._dust = (t._dust || 0) - dt;
+      if (t._dust <= 0) {
+        t._dust = 0.14;
+        this.particles.push({
+          x: t.x - Math.sin(t.angle) * 20 + rand(8, -8),
+          y: t.y + Math.cos(t.angle) * 20 + rand(8, -8),
+          vx: rand(26, -26), vy: rand(26, -26),
+          life: 0.55, maxLife: 0.55,
+          size: rand(9, 4), color: 'rgba(185, 180, 150, 0.20)',
+        });
+      }
+    }
+
+    // ---- camera: lead the aim so fast flicks feel smooth (never shows the void)
     if (me.alive) {
-      this.cam.x = lerp(this.cam.x, me.x, clamp(dt * 7, 0, 1));
-      this.cam.y = lerp(this.cam.y, me.y, clamp(dt * 7, 0, 1));
+      const wm = this.screenToWorld(this.input.mx, this.input.my);
+      const dx = wm.x - me.x, dy = wm.y - me.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const lead = Math.min(150, d * 0.2);
+      this.cam.x = lerp(this.cam.x, me.x + (dx / d) * lead, clamp(dt * 5.5, 0, 1));
+      this.cam.y = lerp(this.cam.y, me.y + (dy / d) * lead, clamp(dt * 5.5, 0, 1));
     }
     this.clampCamera();
     this.shake = Math.max(0, this.shake - dt * 34);
+    this.punch = lerp(this.punch, 0, clamp(dt * 9, 0, 1));
 
     // ---- net state broadcast
     if (this.net && me.alive) {
@@ -982,6 +1018,7 @@ export class Arena {
     }
     this.muzzleFlash(t, t.turret);
     this.shake = Math.max(this.shake, (t.local ? 3.4 : 1.6) * this.settings.shake);
+    if (t.local) this.punch = Math.min(0.022, this.punch + 0.009);
     audio.play('cannon');
     if (t.local) {
       this.stats.shots += 1;
@@ -1068,6 +1105,8 @@ export class Arena {
     t.streak = 0;
     this.explodeAt(t.x, t.y, 1.2);
     audio.play('death');
+    this.punch = Math.max(this.punch, t.local ? 0.05 : 0.016);
+    if (t.local) this.hitstop = 0.08;
 
     if (t.local) {
       this.stats.deaths++;
@@ -1126,6 +1165,8 @@ export class Arena {
     this.stats.deaths++;
     this.explodeAt(me.x, me.y, 1.2);
     audio.play('death');
+    this.punch = 0.05;
+    this.hitstop = 0.09;
     this.shake = 16 * this.settings.shake;
     me.respawnT = 3.2;
     this.hud.respawn?.classList.remove('hidden');
@@ -1397,7 +1438,9 @@ export class Arena {
   // ----------------------------------------------------------------
   updateHud() {
     const me = this.me;
-    const pct = clamp(me.hp / me.maxHp, 0, 1);
+    if (this.hpShown == null) this.hpShown = me.hp;
+    this.hpShown = lerp(this.hpShown, me.hp, 0.18);
+    const pct = clamp(this.hpShown / me.maxHp, 0, 1);
     if (this.hud.hpFill) {
       this.hud.hpFill.style.width = pct * 100 + '%';
       this.hud.hpFill.style.background =
@@ -1499,7 +1542,8 @@ export class Arena {
   // ----------------------------------------------------------------
   render(dt) {
     const ctx = this.ctx;
-    const { vw, vh, zoom, dpr } = this;
+    const { vw, vh, dpr } = this;
+    const zoom = this.zoom * (1 + this.punch);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, vw, vh);
 
@@ -1548,6 +1592,7 @@ export class Arena {
 
     this.drawVignette(ctx);
     this.drawWeather(ctx);
+    if (this.me && this.me.alive && !this.paused) this.drawReticle(ctx);
     if (this.me && !this.me.alive) this.drawDeathOverlay(ctx);
   }
 
@@ -1878,6 +1923,44 @@ export class Arena {
     ctx.strokeStyle = 'rgba(90,160,70,0.5)';
     ctx.lineWidth = 3;
     ctx.strokeRect(2, 2, WORLD.size - 4, WORLD.size - 4);
+    ctx.restore();
+  }
+
+  drawReticle(ctx) {
+    const ready = this.t >= this.me.reloadT;
+    this.aimS.x = lerp(this.aimS.x || this.input.mx, this.input.mx, 0.5);
+    this.aimS.y = lerp(this.aimS.y || this.input.my, this.input.my, 0.5);
+    const speedK = clamp(Math.hypot(this.me.vx, this.me.vy) / (this.me.stats.speed || 1), 0, 1);
+    const spread = 9 + speedK * 7 + (ready ? 0 : 5);
+    const col = ready ? 'rgba(185, 244, 145, 0.92)' : 'rgba(235, 198, 120, 0.8)';
+
+    ctx.save();
+    ctx.translate(this.aimS.x, this.aimS.y);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      ctx.save();
+      ctx.rotate((i * Math.PI) / 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -spread - 8);
+      ctx.lineTo(0, -spread);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(0, 0, 1.7, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (!ready) {
+      const p = clamp(1 - (this.me.reloadT - this.t) / this.me.stats.reload, 0, 1);
+      ctx.globalAlpha = 0.55;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, spread + 12, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

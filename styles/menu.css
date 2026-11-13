@@ -830,3 +830,68 @@ input[type=range]::-moz-range-thumb {
   margin-top: 4px;
 }
 .report-mode b { color: var(--green); font-weight: 400; }
+
+/* ==================================================================
+   Motion system
+   ================================================================== */
+:root {
+  --ease-out: cubic-bezier(.16, .84, .44, 1);
+  --ease-spring: cubic-bezier(.2, 1.25, .35, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+  --dur-slow: 420ms;
+}
+
+#screen-menu:not(.hidden), #screen-auth:not(.hidden) { animation: screenFade .32s ease both; }
+@keyframes screenFade { from { opacity: 0; } to { opacity: 1; } }
+
+#pane-root .pane { animation: paneIn .3s var(--ease-out) both; }
+#pane-root .pane-backdrop { animation: backdropIn .3s ease both; }
+#pane-root.closing { pointer-events: none; }
+#pane-root.closing .pane { animation: paneOut .18s ease both; }
+#pane-root.closing .pane-backdrop { animation: backdropOut .18s ease both; }
+@keyframes paneIn {
+  from { opacity: 0; transform: translateY(22px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes paneOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(14px) scale(.99); }
+}
+@keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes backdropOut { from { opacity: 1; } to { opacity: 0; } }
+
+/* cards rise in on open — uses `translate` so hover transforms still work */
+.pane-body .upgrade-card,
+.pane-body .tank-card,
+.pane-body .shop-card,
+.pane-body .set-card {
+  animation: cardIn .42s var(--ease-out) both;
+}
+.pane-body .tank-card:nth-child(2n),
+.pane-body .shop-card:nth-child(2n) { animation-delay: 45ms; }
+.pane-body .tank-card:nth-child(3n),
+.pane-body .shop-card:nth-child(3n) { animation-delay: 90ms; }
+.pane-body .tank-card:nth-child(4n),
+.pane-body .shop-card:nth-child(4n) { animation-delay: 135ms; }
+@keyframes cardIn {
+  from { opacity: 0; translate: 0 14px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* credit counter rolls to its new value */
+.credits-num.bump { animation: creditBump .34s var(--ease-spring); }
+@keyframes creditBump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); color: #fff3c4; }
+  100% { transform: scale(1); }
+}
+
+/* rail buttons nudge on hover */
+.rail-btn { transition: border-color var(--dur) ease, transform var(--dur) var(--ease-out), background var(--dur) ease; }
+.rail-btn:hover { transform: translateX(4px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pane, .pane-backdrop, .tank-card, .shop-card, .upgrade-card, .set-card, .credits-num,
+  #screen-menu, #screen-auth { animation: none !important; }
+}

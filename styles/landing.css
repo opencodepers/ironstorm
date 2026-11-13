@@ -308,3 +308,11 @@
   .land-status #land-online { display: none; }
   .hero-stats { gap: 20px; }
 }
+
+/* ---------------------------------------------------------- motion */
+#landing-canvas { transform-origin: 50% 50%; will-change: transform; }
+.hero { will-change: transform; }
+@media (prefers-reduced-motion: reduce) {
+  .land-grain, .ticker-track, .cta-glint, .live-dot { animation: none !important; }
+  .hero, #landing-canvas { transform: none !important; }
+}
