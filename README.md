@@ -1,9 +1,9 @@
 # IronStorm
 
+**Play online:** https://opencodepers.github.io/ironstorm/
+
 A browser-based multiplayer tank arena — account creation, persistent progression,
 garage, upgrades, global leaderboards and a realtime shared battlefield.
-
-![game](assets/ui/favicon.svg)
 
 ## Run it
 
