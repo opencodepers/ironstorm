@@ -16,9 +16,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Saira+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles/landing.css" />
-<link rel="stylesheet" href="styles/menu.css" />
-<link rel="stylesheet" href="styles/game.css" />
+<link rel="stylesheet" href="styles/landing.css?v=10" />
+<link rel="stylesheet" href="styles/menu.css?v=10" />
+<link rel="stylesheet" href="styles/game.css?v=10" />
 </head>
 <body>
 
@@ -89,6 +89,7 @@
 
 <!-- ============================================================ auth -->
 <section id="screen-auth" class="screen hidden">
+  <button id="auth-back" class="overlay-back auth-back" type="button">← BACK</button>
   <div class="auth-bg">
     <div class="auth-glow"></div>
     <div class="auth-grid"></div>
@@ -361,6 +362,7 @@
 
     <div id="hud-pause" class="hud-pause hidden">
       <div class="pause-card">
+        <button id="hud-pause-back" class="overlay-back pause-back" type="button">← BACK TO BATTLE</button>
         <h2 data-i18n="pause.paused">PAUSED</h2>
         <p>Combat is frozen while you are paused.</p>
         <div id="hud-host" class="hud-host">
@@ -382,7 +384,7 @@
       <div class="academy-bar"><i id="academy-fill"></i></div>
       <div class="academy-actions">
         <button id="academy-range" class="btn">FREE-FIRE RANGE</button>
-        <button id="academy-exit" class="btn btn-ghost">RETURN TO BASE</button>
+        <button id="academy-exit" class="btn btn-ghost">← BACK TO BASE</button>
       </div>
     </div>
   </div>
@@ -404,6 +406,7 @@
     <div class="rg-inner">
       <b>ROTATE YOUR DEVICE</b>
       <span>IronStorm plays in landscape.</span>
+      <button id="rotate-back" class="overlay-back" type="button">← BACK TO BASE</button>
     </div>
   </div>
 </section>
@@ -411,6 +414,6 @@
 <div id="modal-root"></div>
 
 <script src="vendor/supabase.js"></script>
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/app.js?v=10"></script>
 </body>
 </html>

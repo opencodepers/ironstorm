@@ -1029,6 +1029,8 @@ export class Arena {
     window.addEventListener('blur', this._onBlur);
 
     $('#hud-resume')?.addEventListener('click', () => this.togglePause());
+    $('#hud-pause-back')?.addEventListener('click', () => this.togglePause());
+    $('#rotate-back')?.addEventListener('click', () => this.leave());
     $('#hud-leave')?.addEventListener('click', () => this.leave());
     this.hud.abilities?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-ability]');

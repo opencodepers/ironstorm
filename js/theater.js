@@ -48,9 +48,9 @@ export function openTheater(replay = lastReplay()) {
   if (!root) return;
   if (!replay?.frames?.length) {
     root.innerHTML = `<div class="modal-backdrop"></div><div class="report theater-empty">
-      <h2>NO REPLAY YET</h2><p>Finish a battle and the theater will keep the last one for this session.</p>
-      <button class="btn" data-theater-close>CLOSE</button></div>`;
-    root.querySelector('[data-theater-close]')?.addEventListener('click', () => { root.innerHTML = ''; });
+      <button class="overlay-back theater-empty-back" data-theater-close type="button">← BACK</button>
+      <h2>NO REPLAY YET</h2><p>Finish a battle and the theater will keep the last one for this session.</p></div>`;
+    root.querySelectorAll('[data-theater-close]').forEach((b) => b.addEventListener('click', () => { root.innerHTML = ''; }));
     return;
   }
 
@@ -62,7 +62,10 @@ export function openTheater(replay = lastReplay()) {
     <div class="theater-modal">
       <header class="theater-head">
         <div><h2>REPLAY THEATER</h2><p>${esc(replay.map || 'LAST BATTLE')} · ${duration.toFixed(0)}s · DRAG TO PAN · WHEEL TO ZOOM</p></div>
-        <button class="icon-btn" data-theater-close aria-label="Close">✕</button>
+        <div class="theater-head-actions">
+          <button class="overlay-back" data-theater-close type="button">← BACK</button>
+          <button class="icon-btn" data-theater-close aria-label="Close">✕</button>
+        </div>
       </header>
       <canvas id="theater-canvas"></canvas>
       <div class="theater-controls">
@@ -306,7 +309,7 @@ export function openTheater(replay = lastReplay()) {
     window.removeEventListener('keyup', onKeyUp);
     root.innerHTML = '';
   };
-  root.querySelector('[data-theater-close]')?.addEventListener('click', close);
+  root.querySelectorAll('[data-theater-close]').forEach((b) => b.addEventListener('click', close));
   root.querySelector('.modal-backdrop')?.addEventListener('click', close);
   const onEsc = (e) => { if (e.key === 'Escape') { close(); window.removeEventListener('keydown', onEsc); } };
   window.addEventListener('keydown', onEsc);

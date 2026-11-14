@@ -2034,6 +2034,58 @@ body.high-contrast .rail-btn, body.high-contrast .mode-chip, body.high-contrast 
 body.high-contrast .panel-cap i, body.high-contrast .play-sub { color: #f2fff0; }
 body.high-contrast .systems-panel, body.high-contrast .deploy-panel, body.high-contrast .tank-frame { border-color: #d8ffd0; }
 
+/* ==================================================================
+   Overlay navigation
+   ================================================================== */
+.overlay-back {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  align-self: flex-start; flex: 0 0 auto; min-height: 32px; padding: 7px 11px;
+  border: 1px solid rgba(255, 97, 52, .58); background: rgba(8, 12, 9, .94);
+  color: #f0f3e4; cursor: pointer; text-transform: uppercase;
+  font-family: var(--font); font-size: 8px; font-weight: 600; line-height: 1; letter-spacing: .15em;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+  transition: color .16s, border-color .16s, background .16s;
+}
+.overlay-back:hover {
+  border-color: var(--deck-hot); background: rgba(255, 97, 52, .15); color: #fff;
+}
+.overlay-back:focus-visible { outline: 2px solid var(--deck-hot-soft); outline-offset: 2px; }
+
+.auth-back { position: absolute; z-index: 6; top: 22px; left: 26px; }
+.pause-back { align-self: flex-start; margin-bottom: 0; }
+
+.pane-head { flex-wrap: wrap; gap: 12px; }
+.pane-head-right { flex-wrap: wrap; justify-content: flex-end; }
+.pane-head-right .overlay-back { min-height: 34px; }
+
+.report-head {
+  position: sticky; top: 0; z-index: 6; flex-wrap: wrap; gap: 12px;
+  background: #0c150d; box-shadow: 0 8px 20px rgba(0, 0, 0, .3);
+}
+.report-head-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+.report-head-actions .overlay-back { min-height: 34px; }
+
+.theater-head {
+  position: sticky; top: 0; z-index: 6; flex-wrap: wrap; gap: 12px;
+  padding-bottom: 8px; background: #080e08; box-shadow: 0 8px 20px rgba(0, 0, 0, .3);
+}
+.theater-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.theater-empty-back { margin-bottom: 12px; }
+
+.dogtag-modal header { flex-wrap: wrap; gap: 12px; }
+.dogtag-head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.rankup-card .overlay-back { margin: 16px auto 0; }
+.rankup { z-index: 95; }
+.rg-inner .overlay-back { margin: 10px auto 0; }
+
+@media (max-width: 719px) {
+  .auth-back { top: 14px; left: 14px; }
+  .report-head, .theater-head { padding-left: 16px; padding-right: 16px; }
+  .report-head-actions { width: 100%; justify-content: space-between; }
+  .report-head-actions .report-verdict { margin-left: auto; }
+}
+
 /* ---------------------------------------------------------- mission brief */
 .bay-brief {
   width: 100%; max-width: 680px; margin: 9px auto 0; padding: 8px 12px;

@@ -45,11 +45,22 @@ function trackLobbyPresence(room) {
   });
 }
 
+let refreshingForUpdate = false;
 function registerServiceWorker() {
   try {
     if (!('serviceWorker' in navigator)) return;
     if (!location.protocol.startsWith('http')) return;
-    navigator.serviceWorker.register('./sw.js').catch(() => { /* offline shell is optional */ });
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // A new worker has claimed this page. Reload once so HTML and CSS
+      // always come from the same build, never a stale/mixed pair.
+      if (!hadController || refreshingForUpdate) return;
+      refreshingForUpdate = true;
+      location.reload();
+    });
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then((reg) => { reg.update().catch(() => {}); })
+      .catch(() => { /* offline shell is optional */ });
   } catch { /* sandboxed embeds cannot register a service worker */ }
 }
 
@@ -156,6 +167,15 @@ bindAuth({
     loadLocal(state.uid);
     showAuthScreen(false);
     showMenu();
+  },
+  onBack(fromMenu) {
+    showAuthScreen(false);
+    if (fromMenu) {
+      refreshMenu();
+      return;
+    }
+    $('#screen-menu')?.classList.add('hidden');
+    showLanding();
   },
 });
 

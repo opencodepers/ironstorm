@@ -1,8 +1,8 @@
 /* IronStorm offline shell.
-   Precache the static game, then serve assets cache-first and the shell
-   network-first with a cache fallback. Supabase traffic is never cached. */
+   Precache the static game, serve styles and the shell network-first, and
+   keep query-versioned assets readable offline. Supabase traffic is never cached. */
 
-const CACHE = 'ironstorm-v9';
+const CACHE = 'ironstorm-v10';
 const CORE = [
   './',
   './index.html',
@@ -58,6 +58,9 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+const fromCache = (req) => caches.match(req)
+  .then((hit) => hit || caches.match(req, { ignoreSearch: true }));
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -77,17 +80,14 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Styles: stale-while-revalidate so a new build is picked up next visit.
+  // Styles: network first, never pair fresh markup with old CSS.
   if (url.pathname.includes('/styles/')) {
     event.respondWith(
-      caches.match(req).then((hit) => {
-        const refresh = fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        }).catch(() => hit);
-        return hit || refresh;
-      })
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      }).catch(() => fromCache(req))
     );
     return;
   }
@@ -100,6 +100,6 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         return res;
       })
-      .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
+      .catch(() => fromCache(req).then((hit) => hit || caches.match('./index.html')))
   );
 });

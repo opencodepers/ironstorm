@@ -427,6 +427,7 @@ function renderPane() {
           <p>${tr(`pane.${currentPane}.sub`, meta.sub)}</p>
         </div>
         <div class="pane-head-right">
+          <button class="overlay-back" data-close type="button">← BACK</button>
           <span class="pane-credits">${ICONS.coin}<b>${fmt(state.profile.credits)}</b></span>
           <button class="icon-btn" data-close aria-label="Close">${ICONS.close}</button>
         </div>
@@ -1859,7 +1860,10 @@ function openDogTag() {
   root.innerHTML = `<div class="modal-backdrop"></div>
     <div class="dogtag-modal">
       <header><div><h2>COMMANDER DOG TAG</h2><p>Share your record with the squad.</p></div>
-        <button class="icon-btn" data-dogtag-close>✕</button></header>
+        <div class="dogtag-head-actions">
+          <button class="overlay-back" data-dogtag-close type="button">← BACK</button>
+          <button class="icon-btn" data-dogtag-close aria-label="Close">✕</button>
+        </div></header>
       <canvas id="dogtag-canvas" width="900" height="500"></canvas>
       <div class="dogtag-actions">
         <a class="btn" id="dogtag-download" download="ironstorm-dogtag.png">DOWNLOAD PNG</a>
@@ -2135,14 +2139,15 @@ function wireGameplay() {
   });
   $('#btn-goto-auth')?.addEventListener('click', () => {
     closePane();
-    window.dispatchEvent(new CustomEvent('ironstorm:show-auth', { detail: { mode: 'up' } }));
+    window.dispatchEvent(new CustomEvent('ironstorm:show-auth', { detail: { mode: 'up', from: 'menu' } }));
   });
 }
 
 // ---------------------------------------------------------------- auth screen
 let setAuthMode = null;
+let authFromMenu = false;
 
-export function bindAuth({ onAccount, onGuest }) {
+export function bindAuth({ onAccount, onGuest, onBack }) {
   const screen = $('#screen-auth');
   if (!screen) return;
   let mode = 'in';
@@ -2213,6 +2218,11 @@ export function bindAuth({ onAccount, onGuest }) {
     if (e.key === 'Enter') { e.preventDefault(); runAuth(); }
   }));
 
+  $('#auth-back')?.addEventListener('click', () => {
+    audio.play('uiBack');
+    onBack?.(authFromMenu);
+  });
+
   $('#auth-guest')?.addEventListener('click', () => {
     audio.play('ui');
     onGuest?.();
@@ -2221,6 +2231,7 @@ export function bindAuth({ onAccount, onGuest }) {
   setMode('in');
   setAuthMode = setMode;
   window.addEventListener('ironstorm:show-auth', (e) => {
+    authFromMenu = e.detail?.from === 'menu';
     setMode(e.detail?.mode === 'up' ? 'up' : 'in');
     $('#screen-menu')?.classList.add('hidden');
     screen.classList.remove('hidden');
@@ -2228,7 +2239,8 @@ export function bindAuth({ onAccount, onGuest }) {
   });
 }
 
-export function showAuthScreen(show, mode) {
+export function showAuthScreen(show, mode, fromMenu = false) {
+  if (show) authFromMenu = fromMenu;
   if (mode) setAuthMode?.(mode);
   if (show) $('#screen-landing')?.classList.add('hidden');
   $('#screen-auth')?.classList.toggle('hidden', !show);
@@ -2252,7 +2264,10 @@ export function showReport(data) {
           <h2>BATTLE REPORT</h2>
           <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.room ? ` · SERVER <b>${esc(data.room.name)}</b>` : ''}${data.map ? ` · MAP <b>${esc(data.map)}</b>` : ''}${data.mutatorName && data.mutator !== 'standard' ? ` · <b>${esc(data.mutatorName)}</b>` : ''}${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
         </div>
-        <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
+        <div class="report-head-actions">
+          <button class="overlay-back" id="report-back" type="button">← BACK</button>
+          <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
+        </div>
       </div>
       ${data.replay && data.replay.frames?.length ? `<div class="report-replay">
         <canvas id="replay-canvas"></canvas>
@@ -2310,6 +2325,7 @@ export function showReport(data) {
     $('.report-replay')?.classList.add('skipped');
   });
 
+  $('#report-back')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
   $('#report-menu')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
   $('#report-again')?.addEventListener('click', () => {
     stopReplay();
@@ -2467,7 +2483,7 @@ function showRankUp(level) {
       <span>LEVEL ${level} · SUPPLY CRATE UNLOCKED</span>
       <div class="rankup-next"><em>NEXT RANK</em> ${rankName(level + 2)}</div>
       <div class="rankup-bar"><i style="width:${Math.round(prog.pct * 100)}%"></i></div>
-      <small>CLICK TO CONTINUE</small>
+      <button class="overlay-back rankup-back" type="button">← BACK TO DECK</button>
     </div>`;
   root.appendChild(el);
   audio.play('rank');
@@ -2480,7 +2496,10 @@ function showRankUp(level) {
     setTimeout(() => el.remove(), 480);
   };
   el.addEventListener('click', dismiss);
-  setTimeout(dismiss, 2400);
+  el.querySelector('.rankup-back')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dismiss();
+  });
 }
 
 async function grantRankCrate() {
