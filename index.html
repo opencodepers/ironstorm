@@ -15,7 +15,7 @@
 <link rel="icon" href="assets/ui/favicon.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Saira+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="styles/landing.css" />
 <link rel="stylesheet" href="styles/menu.css" />
 <link rel="stylesheet" href="styles/game.css" />
@@ -139,93 +139,149 @@
   <div class="bg-layer bg-vignette"></div>
 
   <header class="topbar">
+    <div class="brand-bay">
+      <span class="brand-badge" aria-hidden="true">IS</span>
+      <span class="brand-copy"><b>IRON<span>STORM</span></b><i>ARMORED COMMAND</i></span>
+    </div>
+
     <div class="id-block">
+      <div class="id-kicker">COMMANDER // ACTIVE</div>
       <div class="id-card"><span id="menu-username">GUEST2926</span><span id="menu-tier" class="id-tier">◆ BRONZE</span></div>
       <div class="id-sub" id="menu-sub">Progress saved on this device</div>
     </div>
-    <div class="credits-card">
-      <div class="coin-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="#c9a227"/><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="none" stroke="#f0d67a" stroke-width="1.1"/><ellipse cx="12" cy="12" rx="3.9" ry="5.8" fill="none" stroke="#8a6a12" stroke-width="1"/><path d="M12 8.4c-1.9 0-2.9.9-2.9 1.9s1 1.6 2.9 2 2.9.9 2.9 2-1 1.9-2.9 1.9" fill="none" stroke="#f7e6a6" stroke-width="1.4"/></svg>
+
+    <div class="topbar-right">
+      <div class="deck-status"><i class="live-pip" aria-hidden="true"></i><span>ARMORY LINK</span><b>SEASON 01</b></div>
+      <div class="credits-card">
+        <div class="coin-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="#c9a227"/><ellipse cx="12" cy="12" rx="6.2" ry="8.4" fill="none" stroke="#f0d67a" stroke-width="1.1"/><ellipse cx="12" cy="12" rx="3.9" ry="5.8" fill="none" stroke="#8a6a12" stroke-width="1"/><path d="M12 8.4c-1.9 0-2.9.9-2.9 1.9s1 1.6 2.9 2 2.9.9 2.9 2-1 1.9-2.9 1.9" fill="none" stroke="#f7e6a6" stroke-width="1.4"/></svg>
+        </div>
+        <div class="credits-copy">
+          <div class="credits-num" id="menu-credits">0</div>
+          <div class="credits-label">CREDITS</div>
+        </div>
       </div>
-      <div class="credits-num" id="menu-credits">0</div>
-      <div class="credits-label">CREDITS</div>
     </div>
   </header>
 
   <main class="menu-main">
-    <nav class="rail">
-      <button class="rail-btn" data-pane="upgrades">
-        <span class="rb-icon" data-icon="gear"></span><span class="rb-text">UPGRADES</span>
-      </button>
-      <button class="rail-btn" data-pane="garage">
-        <span class="rb-icon" data-icon="hangar"></span><span class="rb-text">GARAGE</span>
-      </button>
-      <button class="rail-btn" data-pane="shop">
-        <span class="rb-icon" data-icon="cart"></span><span class="rb-text">SHOP</span>
-      </button>
-      <button class="rail-btn" data-pane="squad">
-        <span class="rb-icon" data-icon="squad"></span><span class="rb-text">SQUAD</span>
-      </button>
-      <button class="rail-btn" data-pane="friends">
-        <span class="rb-icon" data-icon="user"></span><span class="rb-text">FRIENDS</span>
-      </button>
-      <button class="rail-btn" data-pane="career">
-        <span class="rb-icon" data-icon="reload"></span><span class="rb-text">CAREER</span>
-      </button>
-      <button class="rail-btn" data-pane="medals">
-        <span class="rb-icon" data-icon="skull"></span><span class="rb-text">MEDALS</span>
-      </button>
-      <button class="rail-btn" data-pane="servers">
-        <span class="rb-icon" data-icon="servers"></span><span class="rb-text">SERVERS</span>
-      </button>
-      <button class="rail-btn" data-pane="leaderboards">
-        <span class="rb-icon" data-icon="trophy"></span><span class="rb-text">LEADERBOARDS</span>
-      </button>
-      <button class="rail-btn" data-pane="gameplay">
-        <span class="rb-icon" data-icon="gamepad"></span><span class="rb-text" data-i18n="rail.gameplay">GAMEPLAY</span>
-      </button>
-      <button class="rail-btn" data-pane="academy">
-        <span class="rb-icon" data-icon="shield"></span><span class="rb-text" data-i18n="rail.academy">ACADEMY</span>
-      </button>
-      <button class="rail-btn" data-pane="maps">
-        <span class="rb-icon" data-icon="map"></span><span class="rb-text" data-i18n="rail.maps">MAP LAB</span>
-      </button>
-      <button class="rail-btn" data-pane="ranked">
-        <span class="rb-icon" data-icon="trophy"></span><span class="rb-text" data-i18n="rail.ranked">RANKED</span>
-      </button>
-      <button class="rail-btn" data-pane="theater">
-        <span class="rb-icon" data-icon="play"></span><span class="rb-text" data-i18n="rail.theater">THEATER</span>
-      </button>
-      <div class="rail-scroll" aria-hidden="true"><i></i></div>
-    </nav>
+    <aside class="systems-panel" aria-label="Command systems">
+      <header class="panel-cap"><span><b>01</b> SYSTEMS</span><i>DECK ACCESS</i></header>
+      <nav class="rail" aria-label="Command stations">
+        <button class="rail-btn" data-pane="upgrades" type="button">
+          <span class="rb-icon" data-icon="gear"></span><span class="rb-text">UPGRADES</span>
+        </button>
+        <button class="rail-btn" data-pane="garage" type="button">
+          <span class="rb-icon" data-icon="hangar"></span><span class="rb-text">GARAGE</span>
+        </button>
+        <button class="rail-btn" data-pane="shop" type="button">
+          <span class="rb-icon" data-icon="cart"></span><span class="rb-text">SHOP</span>
+        </button>
+        <button class="rail-btn" data-pane="squad" type="button">
+          <span class="rb-icon" data-icon="squad"></span><span class="rb-text">SQUAD</span>
+        </button>
+        <button class="rail-btn" data-pane="friends" type="button">
+          <span class="rb-icon" data-icon="user"></span><span class="rb-text">FRIENDS</span>
+        </button>
+        <button class="rail-btn" data-pane="career" type="button">
+          <span class="rb-icon" data-icon="reload"></span><span class="rb-text">CAREER</span>
+        </button>
+        <button class="rail-btn" data-pane="medals" type="button">
+          <span class="rb-icon" data-icon="skull"></span><span class="rb-text">MEDALS</span>
+        </button>
+        <button class="rail-btn" data-pane="servers" type="button">
+          <span class="rb-icon" data-icon="servers"></span><span class="rb-text">SERVERS</span>
+        </button>
+        <button class="rail-btn" data-pane="leaderboards" type="button">
+          <span class="rb-icon" data-icon="trophy"></span><span class="rb-text">LEADERBOARDS</span>
+        </button>
+        <button class="rail-btn" data-pane="gameplay" type="button">
+          <span class="rb-icon" data-icon="gamepad"></span><span class="rb-text" data-i18n="rail.gameplay">GAMEPLAY</span>
+        </button>
+        <button class="rail-btn" data-pane="academy" type="button">
+          <span class="rb-icon" data-icon="shield"></span><span class="rb-text" data-i18n="rail.academy">ACADEMY</span>
+        </button>
+        <button class="rail-btn" data-pane="maps" type="button">
+          <span class="rb-icon" data-icon="map"></span><span class="rb-text" data-i18n="rail.maps">MAP LAB</span>
+        </button>
+        <button class="rail-btn" data-pane="ranked" type="button">
+          <span class="rb-icon" data-icon="trophy"></span><span class="rb-text" data-i18n="rail.ranked">RANKED</span>
+        </button>
+        <button class="rail-btn" data-pane="theater" type="button">
+          <span class="rb-icon" data-icon="play"></span><span class="rb-text" data-i18n="rail.theater">THEATER</span>
+        </button>
+        <div class="rail-scroll" aria-hidden="true"><i></i></div>
+      </nav>
+      <footer class="rail-foot"><span class="rail-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>UPLINK STABLE</span><b>14/14</b></footer>
+    </aside>
 
-    <section class="stage">
-      <h1 class="tank-name" id="menu-tank-name">M4 SHERMAN</h1>
+    <section class="stage" aria-label="Tank bay">
+      <div class="stage-head">
+        <div>
+          <div class="stage-kicker"><span>HULL FEED</span><i>BAY C-09</i></div>
+          <div class="tank-plate">
+            <h1 class="tank-name" id="menu-tank-name">M4 SHERMAN</h1>
+            <span class="equipped" id="menu-equipped">EQUIPPED</span>
+          </div>
+        </div>
+        <div class="stage-status"><span>VEHICLE STATE</span><b><i></i> COMBAT READY</b></div>
+      </div>
 
       <div class="tank-frame">
+        <span class="frame-caption">OPTICAL FEED // LIVE</span>
+        <span class="frame-number" aria-hidden="true">09</span>
         <span class="corner tl"></span><span class="corner tr"></span>
         <span class="corner bl"></span><span class="corner br"></span>
         <canvas id="tank-preview" width="380" height="220"></canvas>
         <div class="frame-scan"></div>
+        <span class="frame-ruler" aria-hidden="true"></span>
       </div>
-      <div class="equipped" id="menu-equipped">EQUIPPED</div>
-      <div class="tank-statline">
-        <div class="ts-item"><span>FIRE</span><i><b id="stat-fire"></b></i></div>
-        <div class="ts-item"><span>ARMOUR</span><i><b id="stat-armor"></b></i></div>
-        <div class="ts-item"><span>MOBILITY</span><i><b id="stat-move"></b></i></div>
-      </div>
-      <div class="tank-stattext" id="menu-stat-text"></div>
 
+      <div class="stat-deck">
+        <div class="tank-statline">
+          <div class="ts-item"><span>FIRE</span><i><b id="stat-fire"></b></i></div>
+          <div class="ts-item"><span>ARMOUR</span><i><b id="stat-armor"></b></i></div>
+          <div class="ts-item"><span>MOBILITY</span><i><b id="stat-move"></b></i></div>
+        </div>
+        <div class="tank-stattext" id="menu-stat-text"></div>
+      </div>
+
+      <div class="bay-brief">
+        <div class="bb-kicker"><span>ACTIVE OPERATION</span><b id="menu-brief-tag">FREE-FOR-ALL</b></div>
+        <div class="bb-main"><b id="menu-brief-name">DEATHMATCH</b><p id="menu-brief-text">Every commander for themselves. Most kills takes the sector.</p></div>
+        <div class="bb-rule"><span>WIN CONDITION</span><b id="menu-brief-rule">FIRST TO 25 KILLS</b></div>
+      </div>
+
+      <div class="stage-foot"><span>M4 PLATFORM</span><i></i><span>CREW 04</span><b>READY FOR DEPLOYMENT</b></div>
+    </section>
+
+    <aside class="deploy-panel" aria-label="Deployment">
+      <div class="deploy-watermark" aria-hidden="true"><span>D-09</span><i>SORTIE CLEARANCE</i></div>
+      <header class="panel-cap"><span><b>02</b> OPERATION</span><i>4 WARZONES</i></header>
       <div class="mode-strip" id="menu-modes" aria-label="Selected warzone"></div>
+      <div class="deploy-readout"><span>LAUNCH AUTHORITY</span><b><i></i> CLEARED</b></div>
+
+      <div class="sortie">
+        <div class="sortie-head"><span>SORTIE MANIFEST</span><b>LOCKED</b></div>
+        <div class="sortie-row"><span>HULL</span><b id="menu-sortie-tank">M4 SHERMAN</b></div>
+        <div class="sortie-row"><span>WARZONE</span><b id="menu-sortie-mode">DEATHMATCH</b></div>
+        <div class="sortie-row"><span>WIN COND.</span><b id="menu-sortie-rule">FIRST TO 25 KILLS</b></div>
+      </div>
 
       <div class="play-wrap">
         <button id="play-btn" class="play-btn">
+          <span class="play-copy"><i>COMMIT TO BATTLE</i><b class="play-label" data-i18n="menu.play">PLAY</b></span>
           <span class="play-icon" data-icon="play"></span>
-          <span class="play-label" data-i18n="menu.play">PLAY</span>
         </button>
         <div class="play-sub" id="play-sub">QUICK MATCH</div>
       </div>
-    </section>
+
+      <div class="deploy-facts">
+        <span><i>REGION</i><b>EU-CENTRAL</b></span>
+        <span><i>QUEUE</i><b>QUICKPLAY</b></span>
+      </div>
+      <div class="deploy-stamp" aria-hidden="true">IRON CORPS // AUTHORIZED</div>
+    </aside>
   </main>
 
   <footer class="menu-footer">

@@ -187,6 +187,8 @@ export function refreshMenu() {
   const tank = TANKS[p.tank] || TANKS.sherman;
   const nameTank = $('#menu-tank-name');
   if (nameTank) nameTank.textContent = tank.name;
+  const sortieTank = $('#menu-sortie-tank');
+  if (sortieTank) sortieTank.textContent = tank.name;
 
   const equipped = $('#menu-equipped');
   if (equipped) {
@@ -224,12 +226,22 @@ function renderModeStrip() {
   const wrap = $('#menu-modes');
   if (!wrap) return;
   const active = selectedMode().id;
-  wrap.innerHTML = MODE_ORDER.map((id) => {
+  wrap.innerHTML = MODE_ORDER.map((id, i) => {
     const m = MODES[id];
-    return `<button class="mode-chip ${id === active ? 'on' : ''}" data-mode="${id}" style="--accent:${m.accent}">
-      <span>${m.name}</span><i>${m.rules}</i>
+    return `<button class="mode-chip ${id === active ? 'on' : ''}" data-mode="${id}" style="--accent:${m.accent}" type="button">
+      <span class="mc-index">0${i + 1}</span>
+      <span class="mc-copy"><b>${m.name}</b><i>${m.rules}</i></span>
+      <span class="mc-signal" aria-hidden="true"><i></i><i></i><i></i></span>
     </button>`;
   }).join('');
+  const m = selectedMode();
+  const write = (sel, value) => { const el = $(sel); if (el) el.textContent = value; };
+  write('#menu-brief-tag', m.tag);
+  write('#menu-brief-name', m.name);
+  write('#menu-brief-text', m.blurb);
+  write('#menu-brief-rule', m.rules);
+  write('#menu-sortie-mode', m.name);
+  write('#menu-sortie-rule', m.rules);
   wrap.querySelectorAll('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => { audio.play('ui'); setMode(b.dataset.mode); }));
 }
@@ -364,6 +376,7 @@ export function openPane(name) {
   stopWatchingServers();
   stopWatchingFriends();
   currentPane = name;
+  $$('.rail-btn').forEach((b) => b.classList.toggle('on', b.dataset.pane === name));
   const root = $('#pane-root');
   root.classList.remove('hidden');
   root.dataset.pane = name;
@@ -376,6 +389,7 @@ export function closePane() {
   stopWatchingServers();
   stopWatchingFriends();
   currentPane = null;
+  $$('.rail-btn.on').forEach((b) => b.classList.remove('on'));
   root.classList.add('closing');
   setTimeout(() => {
     root.classList.remove('closing');

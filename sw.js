@@ -2,7 +2,7 @@
    Precache the static game, then serve assets cache-first and the shell
    network-first with a cache fallback. Supabase traffic is never cached. */
 
-const CACHE = 'ironstorm-v8';
+const CACHE = 'ironstorm-v9';
 const CORE = [
   './',
   './index.html',
