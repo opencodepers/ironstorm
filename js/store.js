@@ -13,6 +13,7 @@ export const state = {
   settings: { ...DEFAULT_SETTINGS },
   catalog: {},            // tankId -> { price, unlock_level }
   lastReport: null,
+  local: null,            // career ledger + salvage + cosmetics (see progress.js)
 };
 
 const DEFAULT_UPGRADES = { engine: 0, armor: 0, firepower: 0, reload: 0, tracks: 0 };
@@ -74,6 +75,7 @@ export function save() {
 
 export function loadSettings() {
   state.settings = { ...DEFAULT_SETTINGS, ...storage.get(SETTINGS_KEY, {}) };
+  state.settings.keys = { ...DEFAULT_SETTINGS.keys, ...(state.settings.keys || {}) };
   return state.settings;
 }
 export function saveSettings(s) {

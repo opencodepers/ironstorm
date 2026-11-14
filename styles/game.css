@@ -324,3 +324,127 @@
   color: #8fe86b; padding-right: 16px; border-right: 1px solid #24331f;
   max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.hm-rule {
+  font-family: var(--display); font-size: 9px; letter-spacing: .14em;
+  padding-right: 16px; border-right: 1px solid #24331f;
+  max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hm-rule:empty { display: none; }
+
+/* ==================================================================
+   Host rules panel (pause)
+   ================================================================== */
+.hud-host {
+  border: 1px solid #2a3a24; background: rgba(6, 12, 8, .6);
+  padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  max-height: 38vh; overflow-y: auto; text-align: left;
+}
+.host-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.host-head b { font-size: 8px; letter-spacing: .2em; color: #8fe86b; }
+.host-head span {
+  font-size: 7px; letter-spacing: .14em; color: #6f8065;
+  border: 1px solid #33462c; padding: 2px 6px;
+}
+.host-head span.mine { color: #0a130b; background: #8fe86b; border-color: #8fe86b; }
+.host-row { display: flex; flex-direction: column; gap: 4px; }
+.host-row > span { font-size: 7px; letter-spacing: .18em; color: #6f8065; }
+.host-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.hchip {
+  font-family: var(--font); font-size: 8px; letter-spacing: .08em;
+  padding: 4px 7px; border: 1px solid #2c4026;
+  background: rgba(8, 14, 10, .7); color: #8fa383;
+}
+.hchip.on { border-color: #8fe86b; color: #0b130d; background: #8fe86b; }
+.hchip:disabled { opacity: .55; cursor: not-allowed; }
+.host-note { margin: 0; font-size: 8px; line-height: 1.5; color: #5f7058; }
+.pause-card { width: min(520px, 94vw); max-height: 92vh; overflow-y: auto; }
+
+/* ==================================================================
+   Touch controls
+   ================================================================== */
+#touch-ui { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+#touch-ui.hidden { display: none !important; }
+#touch-stick {
+  position: absolute; left: 26px; bottom: 30px;
+  width: 140px; height: 140px; border-radius: 50%;
+  border: 1px solid rgba(143, 232, 107, .35);
+  background: radial-gradient(circle, rgba(10, 20, 12, .5), rgba(6, 12, 8, .22));
+  pointer-events: auto; touch-action: none;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, .45);
+}
+#touch-stick i {
+  position: absolute; left: 50%; top: 50%;
+  width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+  background: rgba(143, 232, 107, .22);
+  border: 1px solid rgba(143, 232, 107, .6);
+  box-shadow: 0 0 22px rgba(143, 232, 107, .2);
+}
+#touch-stick span {
+  position: absolute; left: 0; right: 0; bottom: -18px; text-align: center;
+  font-size: 7px; letter-spacing: .2em; color: #6f8065;
+}
+#touch-actions {
+  position: absolute; right: 22px; bottom: 28px;
+  display: flex; align-items: flex-end; gap: 12px; pointer-events: none;
+}
+.tbtn {
+  pointer-events: auto; touch-action: none; border-radius: 50%;
+  font-family: var(--display); letter-spacing: .12em; color: #e6f5d9;
+  border: 1px solid #6a9a4e;
+  background: radial-gradient(circle at 40% 35%, rgba(90, 160, 50, .55), rgba(18, 34, 12, .9));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .5);
+}
+.tbtn-fire { width: 92px; height: 92px; font-size: 14px; }
+.tbtn-dash { width: 64px; height: 64px; font-size: 10px; }
+.tbtn.on { background: radial-gradient(circle at 40% 35%, rgba(160, 240, 110, .8), rgba(40, 80, 20, .95)); color: #0b130d; }
+
+body.touch-mode #arena-canvas { cursor: default; }
+body.touch-mode .hud-hint { display: none; }
+body.touch-mode .hud-bottomcenter { bottom: 118px; width: min(420px, 58vw); }
+body.touch-mode .hud-minimap { width: 118px; height: 118px; }
+body.touch-mode .hud-chat-log { bottom: 190px; }
+
+#rotate-guard {
+  display: none; position: absolute; inset: 0; z-index: 40;
+  background: radial-gradient(60% 60% at 50% 45%, #0c160e, #040705 75%);
+  place-items: center; pointer-events: auto;
+}
+@media (pointer: coarse) and (orientation: portrait) {
+  #screen-game:not(.hidden) #rotate-guard { display: grid; }
+}
+.rg-inner { display: flex; flex-direction: column; gap: 8px; text-align: center; }
+.rg-inner b { font-family: var(--display); font-size: 20px; letter-spacing: .22em; color: #eaf7de; }
+.rg-inner span { font-size: 10px; letter-spacing: .16em; color: #7f9074; }
+
+/* ---- academy overlay -------------------------------------------- */
+#academy { position: absolute; top: 84px; left: 50%; transform: translateX(-50%); z-index: 42; width: min(520px, 92vw); pointer-events: none; }
+.academy-card { pointer-events: auto; padding: 16px 18px; border: 1px solid rgba(143,232,107,.4); background: rgba(7,14,8,.9); box-shadow: 0 20px 50px rgba(0,0,0,.5); backdrop-filter: blur(4px); }
+.academy-kicker { display: block; font-size: 8px; letter-spacing: .2em; color: #8fe86b; }
+.academy-kicker b { color: #eaf7de; }
+.academy-card h2 { margin: 6px 0 4px; font-family: var(--display); font-size: 18px; letter-spacing: .08em; color: #eaf7de; }
+.academy-card p { margin: 0; font-size: 10px; line-height: 1.7; color: #91a486; }
+.academy-bar { height: 4px; margin: 10px 0; background: rgba(160,190,140,.16); }
+.academy-bar i { display: block; height: 100%; width: 0; background: #8fe86b; transition: width .25s ease; }
+.academy-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.academy-actions .btn { flex: 1 1 auto; padding: 9px 12px; font-size: 9px; }
+
+/* ---- command abilities ------------------------------------------ */
+.hud-abilities { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; flex-wrap: wrap; }
+.hud-abilities .cp { font-size: 8px; letter-spacing: .12em; color: #8fa184; margin-right: 4px; }
+.hud-abilities .cp b { color: #e8c96a; }
+.ability { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 54px; padding: 5px 7px; border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); background: rgba(8,14,9,.72); color: var(--c); cursor: pointer; }
+.ability b { font-size: 8px; letter-spacing: .1em; line-height: 1.25; }
+.hud-modebar.practice .hm-time { display: none; }
+.ability i { font-style: normal; font-size: 7px; color: #7d8f72; }
+.ability kbd { font-size: 8px; font-family: monospace; color: #eaf7de; }
+.ability.locked { opacity: .4; }
+.ability.ready:hover { background: rgba(143,232,107,.14); }
+
+/* ---- touch abilities + one-handed layout ------------------------ */
+#touch-ability-bar { position: absolute; left: 26px; bottom: 178px; display: flex; flex-direction: column; gap: 7px; pointer-events: auto; }
+.tbtn-ability { width: 40px; height: 34px; font-size: 11px; }
+body.one-hand #touch-actions { left: 186px; right: auto; bottom: 26px; }
+body.one-hand #touch-ability-bar { left: 124px; bottom: 30px; flex-direction: row; }
+@media (pointer: coarse) and (orientation: landscape) {
+  #touch-ability-bar { display: flex; }
+}

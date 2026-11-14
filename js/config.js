@@ -22,6 +22,11 @@ export const NET = {
   interp: 110,      // ms of interpolation buffer for remote tanks
 };
 
+export const DEFAULT_KEYS = {
+  up: 'w', down: 's', left: 'a', right: 'd',
+  dash: 'shift', chat: 'enter', board: 'tab',
+};
+
 export const DEFAULT_SETTINGS = {
   mode: 'deathmatch',
   music: 0.3,
@@ -31,6 +36,15 @@ export const DEFAULT_SETTINGS = {
   showNames: true,
   bots: 6,
   squad: '',
+  aimAssist: false,
+  colorblind: false,
+  reduceFlash: false,
+  highContrast: false,
+  textScale: 1,
+  oneHanded: false,
+  lang: 'en',
+  gamepadRumble: true,
+  keys: { ...DEFAULT_KEYS },
 };
 
 export const PALETTE = [

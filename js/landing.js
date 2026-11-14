@@ -130,7 +130,7 @@ export function paintModeCards() {
 function paintSession() {
   const btn = $('#land-signin');
   if (!btn) return;
-  if (state.profile) {
+  if (state.mode === 'account') {
     btn.textContent = state.profile.username;
     btn.classList.add('signed');
   } else {

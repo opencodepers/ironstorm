@@ -36,6 +36,8 @@ function emitDirectory() {
       mode: meta.mode || 'deathmatch',
       room: meta.room,
       roomName: meta.roomName || 'ALPHA',
+      rules: meta.rules || null,
+      since: meta.since || 0,
     });
   }
   directory.rooms = out;
@@ -84,6 +86,76 @@ export function trackDirectory(meta) {
 export function untrackDirectory() {
   dirPending = null;
   try { dirChannel?.untrack(); } catch { /* ignore */ }
+}
+
+// ------------------------------------------------------------------
+//  Lobby presence — who is online and which server they are sitting in.
+//  Only the friends list reads this; it is not a matchmaking channel.
+// ------------------------------------------------------------------
+const LOBBY_CHANNEL = 'ironstorm-lobby-v1';
+export const lobby = new Map();
+
+let lobbyChannel = null;
+let lobbyPending = null;
+const lobbyListeners = new Set();
+
+function emitLobby() {
+  if (!lobbyChannel) return;
+  const next = new Map();
+  for (const arr of Object.values(lobbyChannel.presenceState())) {
+    for (const meta of arr) {
+      if (!meta?.name) continue;
+      const key = String(meta.name).toUpperCase();
+      const prev = next.get(key);
+      if (!prev || (meta.at | 0) > (prev.at | 0)) next.set(key, meta);
+    }
+  }
+  lobby.clear();
+  for (const [k, v] of next) lobby.set(k, v);
+  for (const fn of lobbyListeners) {
+    try { fn(lobby); } catch { /* ignore */ }
+  }
+}
+
+function ensureLobby() {
+  if (!state.uid) return null;
+  if (lobbyChannel) return lobbyChannel;
+  lobbyChannel = sb.channel(LOBBY_CHANNEL, { config: { presence: { key: state.uid } } });
+  lobbyChannel
+    .on('presence', { event: 'sync' }, emitLobby)
+    .on('presence', { event: 'join' }, emitLobby)
+    .on('presence', { event: 'leave' }, emitLobby)
+    .subscribe(async (status) => {
+      if (status !== 'SUBSCRIBED') return;
+      if (lobbyPending) {
+        try { await lobbyChannel.track(lobbyPending); } catch { /* ignore */ }
+        lobbyPending = null;
+      }
+      emitLobby();
+    });
+  return lobbyChannel;
+}
+
+export function watchLobby(fn) {
+  lobbyListeners.add(fn);
+  ensureLobby();
+  fn(lobby);
+  return () => lobbyListeners.delete(fn);
+}
+
+export function trackLobby(meta) {
+  lobbyPending = meta;
+  const ch = ensureLobby();
+  if (!ch || ch.state !== 'joined') return;
+  try {
+    const p = ch.track(meta);
+    if (p?.catch) p.catch(() => {});
+  } catch { /* presence may be disabled */ }
+}
+
+export function untrackLobby() {
+  lobbyPending = null;
+  try { lobbyChannel?.untrack(); } catch { /* ignore */ }
 }
 
 const emailFor = (username) => `${username.toLowerCase()}@${EMAIL_DOMAIN}`;
@@ -164,6 +236,16 @@ export async function loadCatalog() {
   const out = {};
   for (const t of data) out[t.id] = { price: t.price, unlock_level: t.unlock_level };
   return out;
+}
+
+export async function fetchHistory(limit = 20) {
+  const { data, error } = await sb
+    .from('match_history')
+    .select('kills,deaths,score,won,credits,xp,played_at')
+    .order('played_at', { ascending: false })
+    .limit(limit);
+  if (error) return { ok: false, rows: [] };
+  return { ok: true, rows: data || [] };
 }
 
 export async function fetchLeaderboard(metric = 'kills') {
@@ -264,6 +346,10 @@ export function connectArena(handlers = {}, room = null) {
     mode: room?.mode || 'deathmatch',
     room: room?.key || '',
     roomName: room?.name || '',
+    rules: room?.rules || null,
+    since: Date.now(),
+    em: state.local?.cosmetics?.emblem || 'none',
+    tr: state.local?.cosmetics?.trail || 'none',
   };
 
   channel
@@ -275,6 +361,14 @@ export function connectArena(handlers = {}, room = null) {
       }
       net.roster = m;
       handlers.onRoster?.(m);
+      // The earliest presence in the room is the host — no election traffic.
+      const all = [];
+      for (const arr of Object.values(channel.presenceState())) {
+        for (const meta of arr) if (meta?.uid) all.push(meta);
+      }
+      all.sort((a, b) => (a.since | 0) - (b.since | 0));
+      const host = all[0];
+      if (host) handlers.onHost?.(host.uid, host.rules || null);
     })
     .on('presence', { event: 'join' }, ({ key, newPresences }) => {
       if (key === uid) return;
@@ -311,6 +405,9 @@ export function connectArena(handlers = {}, room = null) {
     })
     .on('broadcast', { event: 'bye' }, ({ payload }) => {
       if (payload?.uid && payload.uid !== uid) handlers.onLeave?.(payload.uid);
+    })
+    .on('broadcast', { event: 'rules' }, ({ payload }) => {
+      if (payload?.rules) handlers.onRules?.(payload.rules, payload.from || null);
     });
 
   let sendTimer = null;
@@ -327,6 +424,8 @@ export function connectArena(handlers = {}, room = null) {
           roomName: room.name,
           name: p.username,
           level: p.level,
+          rules: meta.rules,
+          since: meta.since,
         });
       }
       send('join', meta);
@@ -358,6 +457,22 @@ export function connectArena(handlers = {}, room = null) {
     sendDamage(payload) { send('dmg', { ...payload, from: uid, fromName: p.username }); },
     sendKill(payload) { send('kill', { ...payload, killer: uid, killerName: p.username }); },
     sendChat(text) { send('chat', { from: p.username, text: String(text).slice(0, 120), t: Date.now() }); },
+    sendRules(next) {
+      meta.rules = next;
+      send('rules', { rules: next, from: uid });
+      try { channel.track(meta); } catch { /* presence may be disabled */ }
+      if (room?.key) {
+        trackDirectory({
+          mode: room.mode,
+          room: room.key,
+          roomName: room.name,
+          name: p.username,
+          level: p.level,
+          rules: next,
+          since: meta.since,
+        });
+      }
+    },
     leave() {
       if (sendTimer) clearInterval(sendTimer);
       untrackDirectory();

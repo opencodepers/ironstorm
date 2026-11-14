@@ -14,8 +14,27 @@ import {
 } from './tanks.js';
 import { MODES, MODE_ORDER } from './modes.js';
 import {
-  ROOM_CAPACITY, roomDisplayName, roomRows, makeRoom, quickRoom, findRoomByName,
+  ROOM_CAPACITY, DEFAULT_ROOM, MUTATORS, roomDisplayName, roomRows, makeRoom, quickRoom, findRoomByName,
 } from './rooms.js';
+import { loadLocal, saveLocal, careerTotals, claimSeasonReward } from './progress.js';
+import { MEDALS, medalProgress, unlockedCount } from './medals.js';
+import {
+  TIERS, tierFor, tierProgress, tierGlyph, lifetimePoints, weekPoints, weekNumber, daysLeft, seasonReward,
+} from './season.js';
+import {
+  COSMETIC_KINDS, COSMETIC_ITEMS, cosmeticsOfKind, ownsCosmetic, equippedCosmetic,
+  buyCosmeticLocal, equipCosmeticLocal,
+} from './cosmetics.js';
+import {
+  friendsWithStatus, addFriend, removeFriend, inviteLink, copyInvite,
+} from './social.js';
+import { DEFAULT_KEYS } from './config.js';
+import { t as tr, LANGS, setLang, applyI18n } from './i18n.js';
+import {
+  mapCode, decodeMap, MAP_PALETTE, GRID, THEMES, listCustom, saveCustom, removeCustom,
+} from './community.js';
+import { rankedState, rankTier, rankProgress, PLACEMENTS, RANK_TIERS } from './ranked.js';
+import { lastReplay, openTheater } from './theater.js';
 import { selectedMode, setMode } from './landing.js';
 import { audio } from './audio.js';
 import { img } from './assets.js';
@@ -56,9 +75,15 @@ let onPlay = null;
 let currentPane = null;
 let previewRaf = 0;
 let leaderMetric = 'kills';
+let leaderFilter = 'all';
+let leaderTank = 'sherman';
 let shopTab = 'vehicles';
 let serverFilter = null;
 let serverUnsub = null;
+let friendUnsub = null;
+
+// Map Lab working state survives pane re-renders.
+let editor = { name: 'CUSTOM MAP', theme: 0, palette: 0, cells: [] };
 
 const PANE_META = {
   upgrades: { title: 'UPGRADES', sub: 'Spend credits on permanent hull improvements' },
@@ -66,13 +91,21 @@ const PANE_META = {
   shop: { title: 'SHOP', sub: 'Vehicles, camouflage patterns and daily supply drops' },
   squad: { title: 'SQUAD', sub: 'Form up and roll into the same arena' },
   servers: { title: 'SERVERS', sub: 'Quickplay, or join a match by server name' },
-  leaderboards: { title: 'LEADERBOARDS', sub: 'Global rankings of the Iron Corps' },
+  career: { title: 'CAREER', sub: 'Your record, per vehicle, and the weekly season' },
+  medals: { title: 'MEDALS', sub: 'Long-term achievements paid in salvage' },
+  friends: { title: 'FRIENDS', sub: 'Who is online, and an invite link to your server' },
+  leaderboards: { title: 'LEADERBOARDS', sub: 'Global rankings and the weekly season' },
   gameplay: { title: 'GAMEPLAY', sub: 'Audio, controls and account settings' },
+  academy: { title: 'ACADEMY', sub: 'Learn the hull, then take the free-fire range' },
+  maps: { title: 'MAP LAB', sub: 'Build a battlefield and share it with a code' },
+  ranked: { title: 'RANKED', sub: 'Placements, rating and a seat in the ladder' },
+  theater: { title: 'THEATER', sub: 'Watch your last battle back with a free camera' },
 };
 
 export function initMenu({ onPlay: play }) {
   onPlay = play;
   applyIcons();
+  applyDisplaySettings();
 
   $$('.rail-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -123,10 +156,19 @@ function startArenaFlow() {
 
 // ---------------------------------------------------------------- menu render
 export function refreshMenu() {
+  applyDisplaySettings();
   const p = state.profile;
   if (!p) return;
   const nameEl = $('#menu-username');
   if (nameEl) nameEl.textContent = p.username;
+
+  const tierEl = $('#menu-tier');
+  if (tierEl) {
+    const tier = tierFor(lifetimePoints(p));
+    tierEl.textContent = `${tierGlyph(tier.id)} ${tier.name}`;
+    tierEl.style.color = tier.color;
+    tierEl.style.borderColor = tier.color;
+  }
 
   const sub = $('#menu-sub');
   if (sub) {
@@ -320,6 +362,7 @@ export function stopPreview() {
 export function openPane(name) {
   if (!PANE_META[name]) return;
   stopWatchingServers();
+  stopWatchingFriends();
   currentPane = name;
   const root = $('#pane-root');
   root.classList.remove('hidden');
@@ -331,6 +374,7 @@ export function closePane() {
   const root = $('#pane-root');
   if (!root || root.classList.contains('hidden') || root.classList.contains('closing')) return;
   stopWatchingServers();
+  stopWatchingFriends();
   currentPane = null;
   root.classList.add('closing');
   setTimeout(() => {
@@ -351,6 +395,13 @@ function renderPane() {
     shop: renderShop,
     squad: renderSquad,
     servers: renderServers,
+    career: renderCareer,
+    medals: renderMedals,
+    friends: renderFriends,
+    academy: renderAcademyPane,
+    maps: renderMapLab,
+    ranked: renderRanked,
+    theater: renderTheater,
   }[currentPane]?.() ?? '';
 
   root.innerHTML = `
@@ -358,8 +409,8 @@ function renderPane() {
     <div class="pane">
       <header class="pane-head">
         <div>
-          <h2>${meta.title}</h2>
-          <p>${meta.sub}</p>
+          <h2>${tr(`rail.${currentPane}`, tr(`pane.${currentPane}.title`, meta.title))}</h2>
+          <p>${tr(`pane.${currentPane}.sub`, meta.sub)}</p>
         </div>
         <div class="pane-head-right">
           <span class="pane-credits">${ICONS.coin}<b>${fmt(state.profile.credits)}</b></span>
@@ -374,6 +425,7 @@ function renderPane() {
 
   wirePane();
   if (currentPane === 'leaderboards') loadLeaderboard();
+  if (currentPane === 'career') loadCareerExtras();
   requestAnimationFrame(paintGaragePreviews);
 }
 
@@ -398,6 +450,18 @@ function wirePane() {
         loadLeaderboard();
       });
     });
+    root.querySelectorAll('[data-lb-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        leaderFilter = btn.dataset.lbFilter;
+        audio.play('ui');
+        rerenderPaneBody();
+        loadLeaderboard();
+      });
+    });
+    $('#lb-tank')?.addEventListener('change', (e) => {
+      leaderTank = e.target.value;
+      loadLeaderboard();
+    });
   }
   if (currentPane === 'gameplay') {
     wireGameplay();
@@ -419,8 +483,86 @@ function wirePane() {
     root.querySelectorAll('[data-contract]').forEach((btn) => {
       btn.addEventListener('click', () => doContract(parseInt(btn.dataset.contract, 10), btn));
     });
+    root.querySelectorAll('[data-cosmetic]').forEach((btn) => {
+      btn.addEventListener('click', () => doCosmetic(btn.dataset.cosmetic, btn));
+    });
     $('#claim-all')?.addEventListener('click', (e) => doClaimAll(e.currentTarget));
     document.getElementById('daily-claim')?.addEventListener('click', (e) => doDaily(e.currentTarget));
+  }
+  if (currentPane === 'career') {
+    loadCareerExtras();
+    $('#dogtag-open')?.addEventListener('click', openDogTag);
+  }
+  if (currentPane === 'academy') {
+    $('#academy-launch')?.addEventListener('click', () => {
+      closePane();
+      document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'academy' } }));
+    });
+    $('#academy-range-launch')?.addEventListener('click', () => {
+      closePane();
+      document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'range' } }));
+    });
+  }
+  if (currentPane === 'maps') wireMapLab();
+  if (currentPane === 'ranked') {
+    root.querySelectorAll('[data-ranked-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        closePane();
+        document.dispatchEvent(new CustomEvent('ironstorm:ranked', { detail: { mode: btn.dataset.rankedMode } }));
+      });
+    });
+  }
+  if (currentPane === 'theater') {
+    $('#theater-watch')?.addEventListener('click', () => { closePane(); openTheater(); });
+  }
+  if (currentPane === 'friends') {
+    friendUnsub = net.watchLobby(() => paintFriendList());
+    const add = () => {
+      const input = $('#friend-name');
+      const res = addFriend(input?.value);
+      if (!res.ok) {
+        audio.play('deny');
+        toast(res.why || 'Could not add that callsign', 'bad');
+        input?.focus();
+        return;
+      }
+      audio.play('buy');
+      if (input) input.value = '';
+      toast(`${res.name} added to your friends`, 'good');
+      rerenderPaneBody();
+    };
+    $('#friend-add')?.addEventListener('click', add);
+    $('#friend-name')?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') add();
+    });
+    $$('#pane-root [data-unfriend]').forEach((b) =>
+      b.addEventListener('click', () => {
+        removeFriend(b.dataset.unfriend);
+        audio.play('uiBack');
+        rerenderPaneBody();
+      }));
+    $$('#pane-root [data-friend-join]').forEach((b) =>
+      b.addEventListener('click', () => joinServer(b.dataset.friendMode, b.dataset.friendJoin)));
+    $('#friend-refresh')?.addEventListener('click', () => {
+      audio.play('ui');
+      rerenderPaneBody();
+    });
+    $('#invite-copy')?.addEventListener('click', async () => {
+      const name = roomDisplayName($('#invite-room')?.value);
+      if (!name) {
+        audio.play('deny');
+        toast('Enter a server name first', 'bad');
+        return;
+      }
+      const link = inviteLink({ room: name, mode: selectedMode().id, squad: state.settings.squad || '' });
+      if (await copyInvite(link)) {
+        audio.play('buy');
+        toast('Invite link copied', 'good');
+      } else {
+        toast(link, 'info');
+      }
+    });
   }
   if (currentPane === 'squad') {
     const code = ensureSquad();
@@ -507,6 +649,13 @@ function rerenderPaneBody() {
     shop: renderShop,
     squad: renderSquad,
     servers: renderServers,
+    career: renderCareer,
+    medals: renderMedals,
+    friends: renderFriends,
+    academy: renderAcademyPane,
+    maps: renderMapLab,
+    ranked: renderRanked,
+    theater: renderTheater,
   }[currentPane]?.() ?? '';
   const holder = root.querySelector('.pane-body');
   if (holder) holder.innerHTML = body;
@@ -514,6 +663,7 @@ function rerenderPaneBody() {
   if (pc) pc.textContent = fmt(state.profile.credits);
   wirePane();
   if (currentPane === 'leaderboards') loadLeaderboard();
+  if (currentPane === 'career') loadCareerExtras();
   requestAnimationFrame(paintGaragePreviews);
   if (currentPane === 'shop') requestAnimationFrame(paintSkinPreviews);
 }
@@ -787,8 +937,11 @@ function countdown(ms) {
 }
 
 function renderShop() {
-  const tabs = [['vehicles', 'VEHICLES'], ['camo', 'CAMO'], ['supply', 'SUPPLY']];
-  const body = shopTab === 'camo' ? renderCamo() : shopTab === 'supply' ? renderSupply() : renderShopVehicles();
+  const tabs = [['vehicles', 'VEHICLES'], ['camo', 'CAMO'], ['salvage', 'SALVAGE'], ['supply', 'SUPPLY']];
+  const body = shopTab === 'camo' ? renderCamo()
+    : shopTab === 'supply' ? renderSupply()
+    : shopTab === 'salvage' ? renderSalvage()
+    : renderShopVehicles();
   return `<div class="shop-tabs">${tabs.map(([k, l]) =>
     `<button class="shop-tab ${shopTab === k ? 'on' : ''}" data-shop-tab="${k}">${l}</button>`).join('')}</div>${body}`;
 }
@@ -901,6 +1054,233 @@ function renderSupply() {
   </div>`;
 }
 
+// ---- career ------------------------------------------------------
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 90) return 'JUST NOW';
+  if (s < 3600) return Math.floor(s / 60) + 'M AGO';
+  if (s < 86400) return Math.floor(s / 3600) + 'H AGO';
+  return Math.floor(s / 86400) + 'D AGO';
+}
+
+function renderCareer() {
+  const p = state.profile;
+  const l = state.local || loadLocal();
+  const t = careerTotals(l);
+  const pts = lifetimePoints(p);
+  const tier = tierFor(pts);
+  const wp = l.weekly;
+  const wpts = weekPoints(wp);
+  const prog = tierProgress(wpts);
+  const stat = (label, value, sub) => `<div class="career-stat"><b>${value}</b><span>${label}</span>${sub ? `<i>${sub}</i>` : ''}</div>`;
+  const rows = TANK_ORDER.map((id) => {
+    const rec = l.tankStats[id];
+    if (!rec || !rec.matches) return '';
+    const kd = rec.deaths ? (rec.kills / rec.deaths).toFixed(2) : rec.kills.toFixed(2);
+    const wr = Math.round((rec.wins / Math.max(1, rec.matches)) * 100);
+    return `<div class="career-tr">
+      <span class="ctr-name">${TANKS[id].name}</span>
+      <span>${rec.kills}</span><span>${kd}</span><span>${rec.matches}</span><span>${wr}%</span>
+    </div>`;
+  }).join('');
+  const matches = (l.history || []).map((m) => {
+    const tank = TANKS[m.tank]?.name || 'M4 SHERMAN';
+    return `<div class="career-match ${m.won ? 'won' : ''}">
+      <span class="cm-result">${m.won ? 'V' : 'D'}</span>
+      <div class="cm-main"><b>${esc(m.modeName || m.mode)}</b>
+        <i>${esc(tank)} · ${esc(m.map || m.room || 'FIELD')} · ${ago(m.at)}</i></div>
+      <div class="cm-line"><b>${m.kills}K</b> / ${m.deaths}D · ${m.accuracy}%</div>
+    </div>`;
+  }).join('');
+  return `<div class="career-banner" style="--tier:${tier.color};--tier-bg:${tier.tint}">
+      <div class="cb-tier">
+        <span class="cb-glyph">${tierGlyph(tier.id)}</span>
+        <div><b>${tier.name}</b><span>${fmt(pts)} CAREER POINTS</span></div>
+      </div>
+      <div class="cb-week">
+        <span>SEASON WEEK ${weekNumber()}</span>
+        <b>${fmt(wpts)} PTS</b>
+        <i>${wp.matches} BATTLES · ${daysLeft()}D LEFT</i>
+      </div>
+      <div class="cb-salvage">${ICONS.crate}<div><b>${fmt(l.salvage)}</b><span>SALVAGE</span></div></div>
+      <button id="dogtag-open" class="cb-dogtag">SHARE DOG TAG</button>
+    </div>
+    <div class="career-grid">
+      ${stat('KILLS', fmt(p.kills))}
+      ${stat('DEATHS', fmt(p.deaths))}
+      ${stat('K / D', (p.deaths ? p.kills / p.deaths : p.kills).toFixed(2))}
+      ${stat('WINS', fmt(p.wins))}
+      ${stat('BATTLES', fmt(p.matches))}
+      ${stat('BEST SCORE', fmt(p.bestScore))}
+      ${stat('BEST STREAK', t.bestStreak, 'THIS DEVICE')}
+      ${stat('ACCURACY', t.accuracy + '%', 'THIS DEVICE')}
+    </div>
+    <div class="season-track">
+      <div class="st-line"><span>WEEK ${weekNumber()} · ${prog.tier.name}</span><span>${prog.next ? `${fmt(prog.need)} TO ${prog.next.name}` : 'MAX TIER'}</span></div>
+      <div class="st-bar"><i style="width:${Math.round(prog.pct * 100)}%;background:${prog.tier.color}"></i></div>
+    </div>
+    <div class="career-split">
+      <section class="career-card">
+        <h3>VEHICLE RECORD</h3>
+        ${rows ? `<div class="career-table"><div class="career-tr head"><span>VEHICLE</span><span>K</span><span>K/D</span><span>BATTLES</span><span>WIN%</span></div>${rows}</div>`
+          : '<p class="career-empty">No battles logged yet. Your first deploy starts the record.</p>'}
+      </section>
+      <section class="career-card">
+        <h3>RECENT BATTLES</h3>
+        <div id="career-history">${matches || '<p class="career-empty">Nothing on file yet.</p>'}</div>
+        <div id="career-server"></div>
+      </section>
+    </div>
+    <p class="pane-note">Battle history, streaks and salvage are stored on this device. Season points reset every Monday 00:00 UTC.</p>`;
+}
+
+async function loadCareerExtras() {
+  if (state.mode !== 'account') return;
+  const res = await net.fetchHistory(20);
+  const holder = $('#career-server');
+  if (!holder || !holder.isConnected) return;
+  if (!res.ok || !res.rows.length) { holder.innerHTML = ''; return; }
+  holder.innerHTML = `<b class="career-sub">COMMAND ARCHIVE</b>${res.rows.map((r) => {
+    const at = Date.parse(r.played_at) || Date.now();
+    return `<div class="career-match ${r.won ? 'won' : ''}">
+      <span class="cm-result">${r.won ? 'V' : 'D'}</span>
+      <div class="cm-main"><b>RECORDED BATTLE</b><i>${ago(at)}</i></div>
+      <div class="cm-line"><b>${r.kills}K</b> / ${r.deaths}D</div>
+    </div>`;
+  }).join('')}`;
+}
+
+// ---- medals ------------------------------------------------------
+function renderMedals() {
+  const l = state.local || loadLocal();
+  const ctx = { profile: state.profile, local: l };
+  const done = unlockedCount(l);
+  return `<div class="medal-head">
+      <div class="mh-count"><b>${done} / ${MEDALS.length}</b><span>MEDALS EARNED</span></div>
+      <div class="mh-salvage">${ICONS.crate}<b>${fmt(l.salvage)}</b><span>SALVAGE</span></div>
+    </div>
+    <div class="medal-grid">${MEDALS.map((m) => {
+      const p = medalProgress(m, ctx);
+      const on = !!l.medals[m.id];
+      return `<article class="medal-card ${on ? 'on' : ''} ${m.tier.toLowerCase()}">
+        <div class="mc-tier">${m.tier}</div>
+        <h3>${m.name}</h3>
+        <p>${m.desc}</p>
+        <div class="mc-bar"><i style="width:${Math.round(p.pct * 100)}%"></i></div>
+        <div class="mc-foot"><span>${on ? 'EARNED' : `${p.have} / ${p.need}`}</span><b>+${m.salvage}</b></div>
+      </article>`;
+    }).join('')}</div>
+    <p class="pane-note">Every medal pays salvage the moment it unlocks. Salvage buys emblems, shell trails and kill effects in the shop.</p>`;
+}
+
+// ---- friends -----------------------------------------------------
+function friendRowsHtml() {
+  const list = friendsWithStatus(net.lobby);
+  if (!list.length) {
+    return '<div class="friend-empty">No friends yet. Add a callsign below — when they are online you can drop into their server.</div>';
+  }
+  return list.map((f) => `<article class="friend-row ${f.online ? 'on' : ''}">
+      <span class="friend-dot"></span>
+      <div class="friend-id"><b>${esc(f.name)}</b>
+        <span>${f.online
+          ? (f.room ? `IN ${esc(f.room.name)} · ${MODES[f.room.mode]?.name || 'ARENA'}` : 'ONLINE IN THE MENU')
+          : 'OFFLINE'}</span></div>
+      ${f.level ? `<span class="friend-lvl">LVL ${f.level}</span>` : ''}
+      ${f.room ? `<button class="sc-buy" data-friend-join="${esc(f.room.name)}" data-friend-mode="${esc(f.room.mode)}">JOIN</button>` : ''}
+      <button class="friend-x" data-unfriend="${esc(f.name)}" title="Remove friend">×</button>
+    </article>`).join('');
+}
+
+function renderFriends() {
+  const list = friendsWithStatus(net.lobby);
+  const online = list.filter((f) => f.online).length;
+  return `<div class="friend-head">
+      <div><b>${list.length} ON YOUR LIST</b><span>${online} ONLINE NOW</span></div>
+      <button class="srv-refresh" id="friend-refresh">REFRESH</button>
+    </div>
+    <div class="friend-list" id="friend-list">${friendRowsHtml()}</div>
+    <div class="friend-add">
+      <label class="field"><span>ADD BY CALLSIGN</span>
+        <input id="friend-name" maxlength="16" placeholder="IRONWOLF" autocomplete="off" spellcheck="false" />
+      </label>
+      <button class="btn" id="friend-add">ADD FRIEND</button>
+    </div>
+    <div class="friend-invite">
+      <label class="field"><span>INVITE TO A SERVER</span>
+        <input id="invite-room" maxlength="16" value="${DEFAULT_ROOM}" autocomplete="off" spellcheck="false" />
+      </label>
+      <button class="btn btn-ghost" id="invite-copy">COPY INVITE LINK</button>
+    </div>
+    <p class="pane-note">Invite links open IronStorm straight into that server and carry your squad code. Online status comes from live presence; the friends list itself is stored on this device.</p>`;
+}
+
+function paintFriendList() {
+  if (currentPane !== 'friends') return;
+  const holder = $('#friend-list');
+  if (!holder) return;
+  holder.innerHTML = friendRowsHtml();
+  $$('#pane-root [data-unfriend]').forEach((b) =>
+    b.addEventListener('click', () => {
+      removeFriend(b.dataset.unfriend);
+      audio.play('uiBack');
+      rerenderPaneBody();
+    }));
+  $$('#pane-root [data-friend-join]').forEach((b) =>
+    b.addEventListener('click', () => joinServer(b.dataset.friendMode, b.dataset.friendJoin)));
+}
+
+// ---- salvage cosmetics ------------------------------------------
+function renderSalvage() {
+  const l = state.local || loadLocal();
+  const sections = Object.entries(COSMETIC_KINDS).map(([kind, meta]) => {
+    const cards = cosmeticsOfKind(kind).map((item) => {
+      const owned = ownsCosmetic(l, kind, item.id);
+      const active = equippedCosmetic(l, kind) === item.id;
+      const afford = (l.salvage | 0) >= item.price;
+      return `<article class="cosmetic-card ${active ? 'equipped' : ''} ${owned ? 'owned' : ''}">
+        <div class="cos-glyph">${item.glyph}</div>
+        <h4>${item.name}</h4>
+        <p>${item.blurb}</p>
+        <div class="cos-foot">
+          <span>${owned ? (active ? 'EQUIPPED' : 'OWNED') : fmt(item.price) + ' SALVAGE'}</span>
+          ${active
+            ? '<button class="sc-buy done" disabled>ACTIVE</button>'
+            : `<button class="sc-buy ${!owned && !afford ? 'locked' : ''}" data-cosmetic="${item.key}" ${!owned && !afford ? 'disabled' : ''}>${owned ? 'EQUIP' : 'BUY'}</button>`}
+        </div>
+      </article>`;
+    }).join('');
+    return `<section class="cosmetic-section">
+      <div class="cos-head"><h3>${meta.label}</h3><span>${meta.sub}</span></div>
+      <div class="cosmetic-grid">${cards}</div>
+    </section>`;
+  }).join('');
+  return `<div class="salvage-head">
+      <div><b>${fmt(l.salvage)}</b><span>SALVAGE AVAILABLE</span></div>
+      <p>Earned from every battle and from medals. Salvage never expires and is shared across every tank.</p>
+    </div>${sections}
+    <p class="pane-note">Cosmetics are stored locally with your career record, so they follow this device rather than the account.</p>`;
+}
+
+function doCosmetic(key, btn) {
+  const item = COSMETIC_ITEMS.find((c) => c.key === key);
+  if (!item) return;
+  const l = state.local || loadLocal();
+  const owned = ownsCosmetic(l, item.kind, item.id);
+  const res = owned
+    ? equipCosmeticLocal(l, item.kind, item.id)
+    : buyCosmeticLocal(l, item.kind, item.id);
+  if (res.ok) {
+    saveLocal(state.uid, l);
+    audio.play(owned ? 'ui' : 'buy');
+    refreshMenu();
+    rerenderPaneBody();
+    toast(owned ? `${item.name} equipped` : `${item.name} unlocked`, 'good');
+  } else {
+    audio.play('deny');
+    toast(res.why || 'Unavailable', 'bad');
+  }
+}
+
 // ---- squad -------------------------------------------------------
 function renderSquad() {
   const code = ensureSquad();
@@ -943,6 +1323,13 @@ function stopWatchingServers() {
   }
 }
 
+function stopWatchingFriends() {
+  if (friendUnsub) {
+    friendUnsub();
+    friendUnsub = null;
+  }
+}
+
 function renderServers() {
   const mode = serverFilter || selectedMode().id;
   return `<div class="srv-head">
@@ -968,7 +1355,7 @@ function serverRowsHtml(mode) {
     return `<article class="srv-row ${full ? 'full' : ''}">
       <div class="srv-id">
         <b>${esc(r.name)}</b>
-        <span>${MODES[mode].name} · ${r.players}/${ROOM_CAPACITY}${r.players === 0 ? ' · EMPTY' : ''}</span>
+        <span>${MODES[mode].name} · ${r.players}/${ROOM_CAPACITY}${r.players === 0 ? ' · EMPTY' : ''}${r.rules && r.rules.mutator !== 'standard' ? ' · ' + MUTATORS[r.rules.mutator].name : ''}</span>
       </div>
       <div class="srv-occ"><i style="width:${pct}%"></i></div>
       <button class="sc-buy ${full ? 'locked' : ''}" data-join-mode="${r.mode}" data-join-name="${esc(r.name)}" ${full ? 'disabled' : ''}>${full ? 'FULL' : 'JOIN'}</button>
@@ -1113,22 +1500,113 @@ async function doDaily(btn) {
 function renderLeaderboards() {
   const tabs = [
     ['kills', 'KILLS'], ['wins', 'WINS'], ['level', 'LEVEL'],
-    ['best_score', 'BEST SCORE'], ['kd', 'K / D'],
+    ['best_score', 'BEST SCORE'], ['kd', 'K / D'], ['season', 'SEASON'],
   ];
   return `
     <div class="lb-tabs">${tabs.map(([k, label]) =>
       `<button class="lb-tab ${leaderMetric === k ? 'on' : ''}" data-metric="${k}">${label}</button>`).join('')}
     </div>
+    <div class="lb-filters">
+      <div class="lb-filter-tabs">
+        ${[['all', tr('lb.all', 'ALL TIME')], ['week', tr('lb.week', 'THIS WEEK')], ['friends', tr('lb.friends', 'FRIENDS')], ['vehicle', tr('lb.vehicle', 'VEHICLE')]].map(([k, label]) =>
+          `<button class="lb-filter ${leaderFilter === k ? 'on' : ''}" data-lb-filter="${k}">${label}</button>`).join('')}
+      </div>
+      <select id="lb-tank" class="lb-tank" aria-label="Vehicle">${TANK_ORDER.map((id) =>
+        `<option value="${id}" ${leaderTank === id ? 'selected' : ''}>${TANKS[id].name}</option>`).join('')}</select>
+    </div>
     <div class="lb-table" id="lb-table"><div class="lb-loading">FETCHING RANKINGS…</div></div>`;
+}
+
+function renderSeasonPanel() {
+  const l = state.local || loadLocal();
+  const pts = weekPoints(l.weekly);
+  const prog = tierProgress(pts);
+  const next = prog.next;
+  return `<div class="season-panel" style="--tier:${prog.tier.color}">
+    <div class="season-head">
+      <div class="sh-week"><span>SEASON</span><b>WEEK ${weekNumber()}</b><i>${daysLeft()} DAYS REMAINING</i></div>
+      <div class="sh-tier">${tierGlyph(prog.tier.id)} ${prog.tier.name}</div>
+    </div>
+    <div class="season-stats">
+      <div><b>${fmt(pts)}</b><span>POINTS</span></div>
+      <div><b>${l.weekly.kills | 0}</b><span>KILLS</span></div>
+      <div><b>${l.weekly.wins | 0}</b><span>WINS</span></div>
+      <div><b>${l.weekly.matches | 0}</b><span>BATTLES</span></div>
+    </div>
+    <div class="season-line"><span>${prog.tier.name}</span><span>${next ? next.name : 'MAX'}</span></div>
+    <div class="season-bar"><i style="width:${Math.round(prog.pct * 100)}%"></i></div>
+    <div class="season-next">${next ? `${fmt(prog.need)} POINTS TO ${next.name}` : 'MAXIMUM TIER — HOLD THE LINE'}</div>
+    <div class="tier-ladder">${TIERS.map((t) => {
+      const rw = seasonReward(t.id);
+      const claimed = !!l.seasonClaims?.[t.id];
+      const locked = pts < t.min;
+      return `<div class="tier-row ${prog.tier.id === t.id ? 'on' : ''}" style="--tier:${t.color}">
+        <span>${tierGlyph(t.id)} ${t.name}</span><b>${fmt(t.min)}+</b>
+        ${rw ? `<i class="tier-reward">+${rw.salvage} SALVAGE${rw.cosmetic ? ' · COSMETIC' : ''}</i>
+        <button class="tier-claim" data-claim-tier="${t.id}" ${claimed || locked ? 'disabled' : ''}>${claimed ? 'CLAIMED' : locked ? 'LOCKED' : 'CLAIM'}</button>` : ''}
+      </div>`;
+    }).join('')}</div>
+    ${l.seasonPayout ? `<p class="season-payout">BEST WEEK PAYOUT · ${esc(l.seasonPayout.week)} · +${fmt(l.seasonPayout.salvage)} SALVAGE</p>` : ''}
+    <p class="pane-note">Weekly points come from kills, wins and completed battles. They reset every Monday 00:00 UTC; your best week is kept and paid out in salvage. Tier badges beside global rankings reflect lifetime points.</p>
+  </div>`;
 }
 
 async function loadLeaderboard() {
   const holder = $('#lb-table');
   if (!holder) return;
+  if (leaderMetric === 'season') {
+    holder.innerHTML = renderSeasonPanel();
+    holder.querySelectorAll('[data-claim-tier]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const res = claimSeasonReward(btn.dataset.claimTier);
+        if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
+        audio.play('buy');
+        toast(`Tier reward: +${fmt(res.reward.salvage)} salvage${res.reward.cosmetic ? ' and a cosmetic' : ''}`, 'good');
+        loadLeaderboard();
+      });
+    });
+    return;
+  }
+  if (leaderFilter === 'week') {
+    const local = state.local || loadLocal();
+    const rows = [...(net.lobby?.values?.() || [])]
+      .filter((m) => m && m.name)
+      .map((m) => ({ name: m.name, wp: m.wp | 0, level: m.level | 0, room: m.roomName || '' }));
+    rows.push({ name: state.profile.username, wp: weekPoints(local.weekly), level: state.profile.level, room: 'YOU' });
+    const seen = new Set();
+    const board = rows
+      .filter((r) => (seen.has(r.name) ? false : seen.add(r.name)))
+      .sort((a, b) => b.wp - a.wp || a.name.localeCompare(b.name));
+    holder.innerHTML = `<div class="lb-caption">LIVE WEEKLY · ONLINE COMMANDERS</div>
+      <div class="lb-row lb-head"><span class="lb-rank">#</span><span class="lb-name">COMMANDER</span>
+      <span>WEEK</span><span>LVL</span><span>SERVER</span><span>STATUS</span></div>
+      ${board.map((r, i) => `<div class="lb-row ${r.name === state.profile.username ? 'lb-me' : ''}">
+        <span class="lb-rank">${i + 1}</span><span class="lb-name">${esc(r.name)}</span>
+        <span>${fmt(r.wp)}</span><span>${r.level}</span><span>${esc(r.room || '—')}</span>
+        <span>${r.room === 'YOU' ? 'YOU' : 'LIVE'}</span></div>`).join('')}`;
+    return;
+  }
+  if (leaderFilter === 'vehicle') {
+    const local = state.local || loadLocal();
+    const rec = local.tankStats?.[leaderTank] || { kills: 0, deaths: 0, matches: 0, wins: 0, shots: 0, hits: 0 };
+    const kd = rec.deaths ? (rec.kills / rec.deaths).toFixed(2) : (rec.kills || 0).toFixed(2);
+    const wr = Math.round((rec.wins / Math.max(1, rec.matches)) * 100);
+    const acc = rec.shots ? Math.round((rec.hits / rec.shots) * 100) : 0;
+    holder.innerHTML = `<div class="lb-caption">YOUR ${TANKS[leaderTank].name} RECORD</div>
+      <div class="lb-vehicle"><b>${fmt(rec.kills)}</b><span>KILLS</span><b>${kd}</b><span>K/D</span><b>${rec.matches}</b><span>BATTLES</span><b>${wr}%</b><span>WINS</span><b>${acc}%</b><span>ACCURACY</span></div>
+      <p class="pane-note">Vehicle records come from your local battle ledger; the command database only stores career totals.</p>`;
+    return;
+  }
   const col = { kills: 'kills', wins: 'wins', level: 'level', best_score: 'best_score', kd: 'kd' }[leaderMetric];
   const res = await net.fetchLeaderboard(col);
   if (!holder.isConnected) return;
-  if (!res.ok || !res.rows.length) {
+  let rows = res.rows || [];
+  if (leaderFilter === 'friends') {
+    const names = new Set(friendsWithStatus().map((f) => f.name));
+    names.add(state.profile.username);
+    rows = rows.filter((r) => names.has(r.username));
+  }
+  if (!res.ok || !rows.length) {
     const me = state.profile;
     holder.innerHTML = `
       <div class="lb-empty">
@@ -1147,13 +1625,278 @@ async function loadLeaderboard() {
       <span class="lb-rank">#</span><span class="lb-name">COMMANDER</span>
       <span>KILLS</span><span>WINS</span><span>LVL</span><span>BEST</span><span>K/D</span>
     </div>
-    ${res.rows.map((r, i) => `
+    ${rows.map((r, i) => {
+      const tier = tierFor(lifetimePoints(r));
+      return `
       <div class="lb-row ${r.username === me ? 'lb-me' : ''}">
         <span class="lb-rank">${i < 3 ? ['①', '②', '③'][i] : i + 1}</span>
-        <span class="lb-name">${esc(r.username)}</span>
+        <span class="lb-name"><i class="lb-tier" style="color:${tier.color}" title="${tier.name}">${tierGlyph(tier.id)}</i>${esc(r.username)}</span>
         <span>${fmt(r.kills)}</span><span>${fmt(r.wins)}</span><span>${r.level}</span>
         <span>${fmt(r.best_score)}</span><span>${Number(r.kd || 0).toFixed(2)}</span>
-      </div>`).join('')}`;
+      </div>`;
+    }).join('')}`;
+}
+
+// ---- academy -----------------------------------------------------
+function renderAcademyPane() {
+  const drills = [
+    ['01', 'DRIVE THE HULL', 'Roll forward, turn, and learn how the tracks carry speed into a corner.'],
+    ['02', 'FIRE AND RELOAD', 'Put three shells into the target dummies and watch the reload bar.'],
+    ['03', 'DASH TO THE ZONE', 'Dash into the marked circle and hold it for three seconds.'],
+  ];
+  return `<div class="academy-pane">
+    <div class="academy-hero">
+      <span class="ah-kicker">FIELD TRAINING · NO REWARDS</span>
+      <h3>THREE DRILLS. THEN THE RANGE.</h3>
+      <p>No bots hunting you, no score, no rank change. Finish the drills and the free-fire range opens with unlimited targets and respawns.</p>
+    </div>
+    <div class="academy-drills">${drills.map(([n, title, sub]) =>
+      `<article class="academy-drill"><b>${n}</b><h4>${title}</h4><p>${sub}</p></article>`).join('')}</div>
+    <div class="academy-cta">
+      <button class="btn" id="academy-launch">${tr('academy.start', 'START ACADEMY')}</button>
+      <button class="btn btn-ghost" id="academy-range-launch">${tr('academy.range', 'FREE-FIRE RANGE')}</button>
+    </div>
+    <p class="pane-note">Touch players get the same drills with the virtual stick and buttons. Gamepads work too — left stick drives, right stick aims, RT fires.</p>
+  </div>`;
+}
+
+// ---- map lab -----------------------------------------------------
+function renderMapLab() {
+  const code = mapCode(editor.name, editor.theme, editor.cells);
+  editor.code = code;
+  const grid = new Map(editor.cells.map((c) => [`${c.x},${c.y}`, c]));
+  const saved = listCustom(state.uid);
+  return `<div class="maplab">
+    <div class="ml-main">
+      <div class="ml-board">
+        <div class="ml-grid">${Array.from({ length: GRID * GRID }, (_, i) => {
+          const x = i % GRID, y = Math.floor(i / GRID);
+          const c = grid.get(`${x},${y}`);
+          return `<button class="ml-cell ${c ? 'filled' : ''}" data-ml-cell="${x},${y}" aria-label="Cell ${x},${y}">${c ? MAP_PALETTE[c.i].label[0] : ''}</button>`;
+        }).join('')}</div>
+        <p class="ml-hint">CLICK A CELL TO PLACE OR REMOVE THE SELECTED PROP</p>
+      </div>
+      <div class="ml-side">
+        <label class="field"><span>MAP NAME</span><input id="ml-name" maxlength="16" value="${esc(editor.name)}" /></label>
+        <label class="field"><span>THEME</span><select id="ml-theme">${THEMES.map((th, i) =>
+          `<option value="${i}" ${editor.theme === i ? 'selected' : ''}>${th.name}</option>`).join('')}</select></label>
+        <div class="ml-palette">${MAP_PALETTE.map((p, i) =>
+          `<button class="ml-prop ${editor.palette === i ? 'on' : ''}" data-ml-palette="${i}">${p.label}</button>`).join('')}</div>
+        <label class="field"><span>SHARE CODE</span><input id="ml-code" readonly value="${esc(code)}" /></label>
+        <div class="ml-actions">
+          <button class="btn" id="ml-test">TEST MAP</button>
+          <button class="btn btn-ghost" id="ml-host">HOST SERVER</button>
+        </div>
+        <div class="ml-actions">
+          <button class="sc-buy" id="ml-copy">COPY CODE</button>
+          <button class="sc-buy" id="ml-save">SAVE</button>
+          <button class="sc-buy" id="ml-random">RANDOM</button>
+          <button class="sc-buy" id="ml-clear">CLEAR</button>
+        </div>
+        <div class="ml-import">
+          <input id="ml-import" placeholder="PASTE A MAP CODE" />
+          <button class="sc-buy" id="ml-import-btn">LOAD</button>
+        </div>
+      </div>
+    </div>
+    <div class="ml-saved">
+      <h3>SAVED BATTLEFIELDS</h3>
+      ${saved.length ? saved.map((m) => `<div class="ml-saved-row">
+        <b>${esc(m.name)}</b><code>${esc(m.code.slice(0, 22))}…</code>
+        <button class="sc-buy" data-map-load="${esc(m.code)}">LOAD</button>
+        <button class="sc-buy" data-map-play="${esc(m.code)}">PLAY</button>
+        <button class="sc-buy" data-map-delete="${esc(m.code)}">DELETE</button>
+      </div>`).join('') : '<p class="career-empty">Nothing saved yet. Build a layout, then hit SAVE.</p>'}
+    </div>
+    <p class="pane-note">Codes are self-contained: a host carries the map into a server, and anyone with the code can load the exact same battlefield. No database needed.</p>
+  </div>`;
+}
+
+function wireMapLab() {
+  const root = $('#pane-root');
+  const redraw = () => {
+    editor.code = mapCode(editor.name, editor.theme, editor.cells);
+    const field = $('#ml-code');
+    if (field) field.value = editor.code;
+  };
+  $('#ml-name')?.addEventListener('input', (e) => { editor.name = e.target.value || 'CUSTOM MAP'; redraw(); });
+  $('#ml-theme')?.addEventListener('change', (e) => { editor.theme = parseInt(e.target.value, 10) || 0; redraw(); });
+  root.querySelectorAll('[data-ml-palette]').forEach((btn) => btn.addEventListener('click', () => {
+    editor.palette = parseInt(btn.dataset.mlPalette, 10) || 0;
+    audio.play('ui');
+    rerenderPaneBody();
+  }));
+  root.querySelectorAll('[data-ml-cell]').forEach((btn) => btn.addEventListener('click', () => {
+    const [x, y] = btn.dataset.mlCell.split(',').map(Number);
+    const at = editor.cells.findIndex((c) => c.x === x && c.y === y);
+    if (at >= 0) editor.cells.splice(at, 1);
+    else editor.cells.push({ i: editor.palette, x, y });
+    audio.play('ui');
+    rerenderPaneBody();
+  }));
+  $('#ml-copy')?.addEventListener('click', async () => {
+    const code = mapCode(editor.name, editor.theme, editor.cells);
+    try { await navigator.clipboard.writeText(code); toast('Map code copied', 'good'); }
+    catch { toast(code, 'info'); }
+  });
+  const launch = (event) => {
+    const code = mapCode(editor.name, editor.theme, editor.cells);
+    closePane();
+    document.dispatchEvent(new CustomEvent(event, { detail: { kind: 'range', map: code, mode: selectedMode().id } }));
+  };
+  $('#ml-test')?.addEventListener('click', () => launch('ironstorm:training'));
+  $('#ml-host')?.addEventListener('click', () => launch('ironstorm:hostmap'));
+  $('#ml-save')?.addEventListener('click', () => {
+    const res = saveCustom(state.uid, mapCode(editor.name, editor.theme, editor.cells));
+    if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
+    audio.play('buy'); toast('Battlefield saved', 'good'); rerenderPaneBody();
+  });
+  $('#ml-random')?.addEventListener('click', () => {
+    const used = new Set();
+    editor.cells = [];
+    for (let i = 0; i < 16; i++) {
+      const x = Math.floor(Math.random() * GRID), y = Math.floor(Math.random() * GRID);
+      if (used.has(`${x},${y}`)) continue;
+      used.add(`${x},${y}`);
+      editor.cells.push({ i: Math.floor(Math.random() * MAP_PALETTE.length), x, y });
+    }
+    audio.play('ui'); rerenderPaneBody();
+  });
+  $('#ml-clear')?.addEventListener('click', () => { editor.cells = []; audio.play('uiBack'); rerenderPaneBody(); });
+  $('#ml-import-btn')?.addEventListener('click', () => {
+    const data = decodeMap(($('#ml-import')?.value || '').trim());
+    if (!data) { audio.play('deny'); toast('That is not a valid map code', 'bad'); return; }
+    editor = { name: data.name, theme: data.theme, palette: editor.palette, cells: data.cells };
+    audio.play('buy'); toast('Map loaded', 'good'); rerenderPaneBody();
+  });
+  root.querySelectorAll('[data-map-load]').forEach((btn) => btn.addEventListener('click', () => {
+    const data = decodeMap(btn.dataset.mapLoad);
+    if (!data) return;
+    editor = { name: data.name, theme: data.theme, palette: editor.palette, cells: data.cells };
+    rerenderPaneBody();
+  }));
+  root.querySelectorAll('[data-map-play]').forEach((btn) => btn.addEventListener('click', () => {
+    closePane();
+    document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'range', map: btn.dataset.mapPlay } }));
+  }));
+  root.querySelectorAll('[data-map-delete]').forEach((btn) => btn.addEventListener('click', () => {
+    removeCustom(state.uid, btn.dataset.mapDelete);
+    audio.play('uiBack'); rerenderPaneBody();
+  }));
+}
+
+// ---- ranked ------------------------------------------------------
+function renderRanked() {
+  const r = rankedState(state.local);
+  const tier = rankTier(r.rating);
+  const prog = rankProgress(r.rating);
+  const placed = r.placements <= 0;
+  return `<div class="ranked-pane" style="--tier:${tier.color}">
+    <div class="ranked-card">
+      <div class="rc-tier"><span>${tier.name}</span><b>${fmt(r.rating)}</b><i>RATING</i></div>
+      <div class="rc-meta"><span>BEST ${fmt(r.best)}</span><span>${r.wins} WINS / ${r.played} PLAYED</span>
+        <span>${placed ? 'PLACED' : `PLACEMENT ${PLACEMENTS - r.placements + 1} / ${PLACEMENTS}`}</span></div>
+      <div class="rank-bar"><i style="width:${Math.round(prog.pct * 100)}%"></i></div>
+      <div class="rank-next">${prog.next ? `${fmt(prog.need)} TO ${prog.next.name}` : 'MAXIMUM RATING'}</div>
+    </div>
+    <div class="ranked-queue">
+      <h3>QUEUE</h3>
+      <div class="ranked-buttons">${['deathmatch', 'team', 'koth'].map((id) =>
+        `<button class="btn" data-ranked-mode="${id}">${MODES[id].name}</button>`).join('')}</div>
+      <p class="set-note">Ranked fields run veteran bots at the current mutator. Rating is local to this commander — the command database cannot store a ladder yet.</p>
+    </div>
+    <div class="ranked-ladder">${RANK_TIERS.map((t) => `<div class="tier-row ${t.id === tier.id ? 'on' : ''}" style="--tier:${t.color}"><span>${t.name}</span><b>${fmt(t.min)}+</b></div>`).join('')}</div>
+    <div class="ranked-history">
+      <h3>RECENT RANKED</h3>
+      ${r.history.length ? r.history.map((h) => `<div class="ranked-row ${h.won ? 'won' : ''}">
+        <b>${h.won ? 'V' : 'D'}</b><span>${h.kills}K / ${h.deaths}D</span><i>${h.delta >= 0 ? '+' : ''}${h.delta}</i><em>${fmt(h.rating)}</em>
+      </div>`).join('') : '<p class="career-empty">No ranked battles yet. Placements swing harder than settled matches.</p>'}
+    </div>
+  </div>`;
+}
+
+// ---- theater -----------------------------------------------------
+function renderTheater() {
+  const replay = lastReplay();
+  const frames = replay?.frames || [];
+  const span = frames.length ? Math.max(0, frames[frames.length - 1].t - frames[0].t) : 0;
+  return `<div class="theater-pane">
+    ${frames.length ? `<div class="theater-card">
+      <span class="tc-kicker">LAST BATTLE</span>
+      <h3>${esc(replay.map || 'FIELD RECORDING')}</h3>
+      <div class="tc-meta"><span>${Math.floor(span / 60)}:${String(Math.floor(span % 60)).padStart(2, '0')} · ${frames.length} FRAMES</span>
+      <span>${replay.obstacles?.length || 0} PROPS</span></div>
+      <button class="btn" id="theater-watch">OPEN THEATER</button>
+      <p class="set-note">Drag to pan, wheel to zoom, WASD to fly. The replay lasts for this browser session.</p>
+    </div>` : `<div class="theater-card empty"><h3>NO REPLAY YET</h3><p>Finish any battle — including a training run — and the theater will hold the recording.</p></div>`}
+  </div>`;
+}
+
+// ---- dog tag -----------------------------------------------------
+function openDogTag() {
+  const root = $('#modal-root');
+  if (!root) return;
+  const l = state.local || loadLocal();
+  const p = state.profile;
+  const t = careerTotals(l);
+  const tier = tierFor(lifetimePoints(p));
+  const medals = Object.keys(l.medals || {}).map((id) => MEDALS.find((m) => m.id === id)).filter(Boolean).slice(0, 3);
+  const fav = Object.entries(l.tankStats || {}).sort((a, b) => (b[1].matches | 0) - (a[1].matches | 0))[0]?.[0] || p.tank;
+  root.innerHTML = `<div class="modal-backdrop"></div>
+    <div class="dogtag-modal">
+      <header><div><h2>COMMANDER DOG TAG</h2><p>Share your record with the squad.</p></div>
+        <button class="icon-btn" data-dogtag-close>✕</button></header>
+      <canvas id="dogtag-canvas" width="900" height="500"></canvas>
+      <div class="dogtag-actions">
+        <a class="btn" id="dogtag-download" download="ironstorm-dogtag.png">DOWNLOAD PNG</a>
+        <button class="btn btn-ghost" data-dogtag-close>CLOSE</button>
+      </div>
+    </div>`;
+  const canvas = $('#dogtag-canvas');
+  const ctx = canvas.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 900, 500);
+  g.addColorStop(0, '#0a120b'); g.addColorStop(1, '#1b2a18');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 900, 500);
+  ctx.strokeStyle = tier.color; ctx.lineWidth = 4; ctx.strokeRect(18, 18, 864, 464);
+  ctx.fillStyle = 'rgba(255,255,255,.04)';
+  for (let i = 0; i < 12; i++) ctx.fillRect(0, i * 46, 900, 1);
+  ctx.fillStyle = tier.color; ctx.font = '700 20px monospace';
+  ctx.fillText(`${tierGlyph(tier.id)} ${tier.name}`, 56, 76);
+  ctx.fillStyle = '#edf5e4'; ctx.font = '700 52px sans-serif';
+  ctx.fillText(p.username, 56, 142);
+  ctx.fillStyle = '#8fa184'; ctx.font = '600 16px monospace';
+  ctx.fillText(`LEVEL ${p.level} · ${fmt(lifetimePoints(p))} CAREER POINTS`, 56, 174);
+  const stats = [['KILLS', fmt(p.kills)], ['K/D', (p.deaths ? p.kills / p.deaths : p.kills).toFixed(2)], ['BATTLES', fmt(p.matches)], ['ACCURACY', t.accuracy + '%'], ['BEST STREAK', t.bestStreak]];
+  stats.forEach(([label, value], i) => {
+    const x = 56 + i * 160;
+    ctx.fillStyle = '#edf5e4'; ctx.font = '700 30px monospace'; ctx.fillText(value, x, 280);
+    ctx.fillStyle = '#7f9275'; ctx.font = '600 12px monospace'; ctx.fillText(label, x, 304);
+  });
+  ctx.fillStyle = '#c9d6bd'; ctx.font = '700 18px sans-serif';
+  ctx.fillText(`FAVOURITE  ${TANKS[fav]?.name || 'M4 SHERMAN'}`, 56, 368);
+  ctx.fillStyle = '#8fa184'; ctx.font = '600 14px monospace';
+  ctx.fillText('MEDALS', 56, 404);
+  medals.forEach((m, i) => {
+    ctx.fillStyle = '#e8c96a'; ctx.font = '600 15px monospace';
+    ctx.fillText(`✦ ${m.name}`, 56 + i * 260, 432);
+  });
+  ctx.fillStyle = 'rgba(143,232,107,.7)'; ctx.font = '600 13px monospace';
+  ctx.fillText('IRONSTORM · OPERATION IRONSTORM', 56, 462);
+  ctx.textAlign = 'right'; ctx.fillStyle = tier.color; ctx.font = '700 64px monospace';
+  ctx.fillText(tierGlyph(tier.id), 844, 300);
+  $('#dogtag-download').href = canvas.toDataURL('image/png');
+  root.querySelectorAll('[data-dogtag-close]').forEach((b) => b.addEventListener('click', () => { root.innerHTML = ''; }));
+  root.querySelector('.modal-backdrop')?.addEventListener('click', () => { root.innerHTML = ''; });
+}
+
+export function applyDisplaySettings() {
+  const s = state.settings || {};
+  const scale = Number(s.textScale) || 1;
+  document.body.classList.toggle('a11y-large', scale >= 1.1);
+  document.body.classList.toggle('a11y-huge', scale >= 1.25);
+  document.body.classList.toggle('high-contrast', !!s.highContrast);
+  document.body.classList.toggle('one-hand', !!s.oneHanded);
+  setLang(s.lang || 'en');
 }
 
 // ---- gameplay / settings -----------------------------------------
@@ -1199,6 +1942,56 @@ function renderGameplay() {
         </div>
       </div>
       <p class="set-note">Bots keep the arena alive. Real commanders join the same server in real time — see SERVERS.</p>
+    </section>
+
+    <section class="set-card">
+      <h3>ACCESSIBILITY</h3>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-colorblind" ${s.colorblind ? 'checked' : ''}><i></i><span>COLOURBLIND TEAM MARKERS</span></label>
+      </div>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-reduceflash" ${s.reduceFlash ? 'checked' : ''}><i></i><span>REDUCE SCREEN FLASHES</span></label>
+      </div>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-aimassist" ${s.aimAssist ? 'checked' : ''}><i></i><span>AIM ASSIST</span></label>
+      </div>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-contrast" ${s.highContrast ? 'checked' : ''}><i></i><span>HIGH CONTRAST UI</span></label>
+      </div>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-shake-toggle" ${s.shake > 0 ? 'checked' : ''}><i></i><span>SCREEN SHAKE</span></label>
+      </div>
+      <div class="set-toggle">
+        <label class="switch"><input type="checkbox" id="set-onehand" ${s.oneHanded ? 'checked' : ''}><i></i><span>ONE-HANDED TOUCH</span></label>
+      </div>
+      <div class="set-line">
+        <span>${tr('settings.text', 'TEXT SIZE')}</span>
+        <div class="seg" id="set-textscale">
+          ${[['1', 'A'], ['1.12', 'A+'], ['1.25', 'A++']].map(([v, label]) =>
+            `<button data-textscale="${v}" class="${String(s.textScale || 1) === v ? 'on' : ''}">${label}</button>`).join('')}
+        </div>
+      </div>
+      <p class="set-note">Team markers gain shapes and switch to blue/orange. Aim assist nudges the turret toward a nearby target; it is most useful on touch. High contrast brightens the HUD and switches teams to cyan/orange.</p>
+    </section>
+
+    <section class="set-card">
+      <h3>KEY BINDINGS</h3>
+      <div class="keybind-list">
+        ${[['up', 'FORWARD'], ['down', 'REVERSE'], ['left', 'TURN LEFT'], ['right', 'TURN RIGHT'],
+           ['dash', 'DASH'], ['chat', 'CHAT'], ['board', 'SCOREBOARD']].map(([k, label]) =>
+          `<div class="keybind"><span>${label}</span><button class="kb-btn" data-bind="${k}">${String(s.keys?.[k] || DEFAULT_KEYS[k]).toUpperCase()}</button></div>`).join('')}
+      </div>
+      <button class="btn btn-ghost" id="keys-reset">RESET TO DEFAULT</button>
+    </section>
+
+    <section class="set-card">
+      <h3>LANGUAGE</h3>
+      <div class="set-line">
+        <span>${tr('settings.language', 'LANGUAGE')}</span>
+        <select id="set-lang" class="set-select">${LANGS.map((l) =>
+          `<option value="${l.code}" ${(s.lang || 'en') === l.code ? 'selected' : ''}>${l.label}</option>`).join('')}</select>
+      </div>
+      <p class="set-note">Core menus, controls and training briefings are translated. Arabic switches the interface to right-to-left.</p>
     </section>
 
     <section class="set-card account-card">
@@ -1250,6 +2043,69 @@ function wireGameplay() {
     state.settings.showFps = e.target.checked;
     saveSettings({ showFps: e.target.checked });
   });
+  const toggle = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', () => {
+      state.settings[key] = el.checked;
+      saveSettings({ [key]: el.checked });
+      applyDisplaySettings();
+      audio.play('ui');
+    });
+  };
+  toggle('set-colorblind', 'colorblind');
+  toggle('set-reduceflash', 'reduceFlash');
+  toggle('set-aimassist', 'aimAssist');
+  toggle('set-contrast', 'highContrast');
+  toggle('set-onehand', 'oneHanded');
+  $('#set-shake-toggle')?.addEventListener('change', (e) => {
+    state.settings.shake = e.target.checked ? 1 : 0;
+    saveSettings({ shake: state.settings.shake });
+    audio.play('ui');
+  });
+  $$('#set-textscale button').forEach((b) => b.addEventListener('click', () => {
+    const scale = parseFloat(b.dataset.textscale) || 1;
+    state.settings.textScale = scale;
+    saveSettings({ textScale: scale });
+    applyDisplaySettings();
+    $$('#set-textscale button').forEach((x) => x.classList.toggle('on', x === b));
+    audio.play('ui');
+  }));
+  $('#set-lang')?.addEventListener('change', (e) => {
+    state.settings.lang = e.target.value;
+    saveSettings({ lang: e.target.value });
+    applyDisplaySettings();
+    audio.play('ui');
+    refreshMenu();
+    rerenderPaneBody();
+  });
+
+  $$('#pane-root [data-bind]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('listening')) return;
+      btn.classList.add('listening');
+      btn.textContent = 'PRESS A KEY';
+      const once = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        window.removeEventListener('keydown', once, true);
+        if (ev.key !== 'Escape') {
+          const k = btn.dataset.bind;
+          state.settings.keys[k] = ev.key.toLowerCase();
+          saveSettings({ keys: state.settings.keys });
+          audio.play('ui');
+        }
+        rerenderPaneBody();
+      };
+      window.addEventListener('keydown', once, true);
+    });
+  });
+  $('#keys-reset')?.addEventListener('click', () => {
+    state.settings.keys = { ...DEFAULT_KEYS };
+    saveSettings({ keys: state.settings.keys });
+    audio.play('uiBack');
+    rerenderPaneBody();
+  });
   $$('#set-bots button').forEach((b) => b.addEventListener('click', () => {
     const n = parseInt(b.dataset.bots, 10);
     state.settings.bots = n;
@@ -1265,11 +2121,13 @@ function wireGameplay() {
   });
   $('#btn-goto-auth')?.addEventListener('click', () => {
     closePane();
-    window.dispatchEvent(new CustomEvent('ironstorm:show-auth'));
+    window.dispatchEvent(new CustomEvent('ironstorm:show-auth', { detail: { mode: 'up' } }));
   });
 }
 
 // ---------------------------------------------------------------- auth screen
+let setAuthMode = null;
+
 export function bindAuth({ onAccount, onGuest }) {
   const screen = $('#screen-auth');
   if (!screen) return;
@@ -1298,27 +2156,48 @@ export function bindAuth({ onAccount, onGuest }) {
 
   tabs.forEach((t) => t.addEventListener('click', () => { audio.play('ui'); setMode(t.dataset.mode); }));
 
-  form?.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const runAuth = async () => {
+    if (!errEl || submit?.disabled) return;
     const username = userIn.value.trim();
     const password = passIn.value;
-    if (!errEl) return;
     errEl.textContent = '';
-    submit.classList.add('busy');
-    submit.disabled = true;
-    const res = mode === 'in'
-      ? await net.signIn(username, password)
-      : await net.signUp(username, password);
-    submit.classList.remove('busy');
-    submit.disabled = false;
-    if (!res.ok) {
-      errEl.textContent = res.error;
+    if (!net.validUsername(username)) {
+      errEl.textContent = 'Callsign: 3-16 letters, numbers or underscores.';
       audio.play('deny');
       return;
     }
-    audio.play('levelup');
-    onAccount?.(res.uid, res.row);
-  });
+    if (password.length < 6) {
+      errEl.textContent = 'Password must be at least 6 characters.';
+      audio.play('deny');
+      return;
+    }
+    submit.classList.add('busy');
+    submit.disabled = true;
+    try {
+      const res = mode === 'in'
+        ? await net.signIn(username, password)
+        : await net.signUp(username, password);
+      if (!res.ok) {
+        errEl.textContent = res.error;
+        audio.play('deny');
+        return;
+      }
+      audio.play('levelup');
+      onAccount?.(res.uid, res.row);
+    } finally {
+      submit.classList.remove('busy');
+      submit.disabled = false;
+    }
+  };
+
+  // Sandboxed embeds (Cudic, itch.io) may omit allow-forms, which blocks
+  // native form submission before the submit event. Drive auth from clicks
+  // and Enter presses instead.
+  form?.addEventListener('submit', (e) => { e.preventDefault(); runAuth(); });
+  submit?.addEventListener('click', (e) => { e.preventDefault(); runAuth(); });
+  [userIn, passIn].forEach((input) => input?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); runAuth(); }
+  }));
 
   $('#auth-guest')?.addEventListener('click', () => {
     audio.play('ui');
@@ -1326,14 +2205,18 @@ export function bindAuth({ onAccount, onGuest }) {
   });
 
   setMode('in');
-  window.addEventListener('ironstorm:show-auth', () => {
+  setAuthMode = setMode;
+  window.addEventListener('ironstorm:show-auth', (e) => {
+    setMode(e.detail?.mode === 'up' ? 'up' : 'in');
     $('#screen-menu')?.classList.add('hidden');
     screen.classList.remove('hidden');
     userIn?.focus();
   });
 }
 
-export function showAuthScreen(show) {
+export function showAuthScreen(show, mode) {
+  if (mode) setAuthMode?.(mode);
+  if (show) $('#screen-landing')?.classList.add('hidden');
   $('#screen-auth')?.classList.toggle('hidden', !show);
   $('#screen-menu')?.classList.toggle('hidden', show);
   if (show) $('#auth-user')?.focus();
@@ -1353,7 +2236,7 @@ export function showReport(data) {
       <div class="report-head">
         <div>
           <h2>BATTLE REPORT</h2>
-          <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.room ? ` · SERVER <b>${esc(data.room.name)}</b>` : ''}${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
+          <div class="report-mode">WARZONE <b>${esc(data.modeName || 'DEATHMATCH')}</b>${data.room ? ` · SERVER <b>${esc(data.room.name)}</b>` : ''}${data.map ? ` · MAP <b>${esc(data.map)}</b>` : ''}${data.mutatorName && data.mutator !== 'standard' ? ` · <b>${esc(data.mutatorName)}</b>` : ''}${data.verdict ? ` · RESULT <b>${esc(data.verdict)}</b>` : ''}</div>
         </div>
         <span class="report-verdict">${win ? 'VICTORY' : (data.verdict || 'SURVIVED')}</span>
       </div>
@@ -1381,7 +2264,11 @@ export function showReport(data) {
       <div class="report-rewards">
         <div class="reward"><span>${ICONS.coin}</span><b>+${fmt(data.earned.credits)}</b><i>CREDITS</i></div>
         <div class="reward"><span>${ICONS.bolt}</span><b>+${fmt(data.earned.xp)}</b><i>XP</i></div>
+        ${data.earned.salvage ? `<div class="reward salvage"><span>${ICONS.crate}</span><b>+${fmt(data.earned.salvage)}</b><i>SALVAGE</i></div>` : ''}
       </div>
+      ${data.rankedResult ? `<div class="report-ranked"><span>RANKED</span><b>${data.rankedResult.delta >= 0 ? '+' : ''}${data.rankedResult.delta}</b><i>${fmt(data.rankedResult.rating)} RATING · ${data.rankedResult.tier.name}${data.rankedResult.placement ? ' · PLACEMENT' : ''}${data.rankedResult.promotion ? ` · +${fmt(data.rankedResult.promotion.salvage)} SALVAGE PROMOTION` : ''}</i></div>` : ''}
+      ${data.medals?.length ? `<div class="report-medals">${data.medals.map((m) =>
+        `<span class="rm"><b>${m.name}</b><i>+${m.salvage} SALVAGE</i></span>`).join('')}</div>` : ''}
       <div class="report-level">
         <div class="rl-line"><span>LEVEL ${prog.level}</span><span>${fmt(p.xp)} XP</span></div>
         <div class="rl-bar"><i style="width:${prog.pct * 100}%"></i></div>
@@ -1624,6 +2511,7 @@ function fromRowLocal(row) {
     skin: row.skin || 'olive',
     ownedSkins: Array.isArray(row.owned_skins) && row.owned_skins.length ? row.owned_skins : ['olive'],
     lastDaily: row.last_daily ? Date.parse(row.last_daily) || 0 : 0,
+    contracts: row.contracts || null,
     kills: row.kills ?? 0,
     deaths: row.deaths ?? 0,
     matches: row.matches ?? 0,

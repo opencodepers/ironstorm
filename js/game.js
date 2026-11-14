@@ -8,7 +8,13 @@ import { state, noteSquadmate } from './store.js';
 import { connectArena } from './net.js';
 import { TANKS, TANK_ORDER, deriveStats, skinCss } from './tanks.js';
 import { modeFor } from './modes.js';
-import { WORLD, PALETTE, NET } from './config.js';
+import { WORLD, PALETTE, NET, DEFAULT_KEYS } from './config.js';
+import { mapFor, pickMap, MAP_LIST, MAP_DEFS } from './maps.js';
+import { MUTATORS, MUTATOR_ORDER, WEATHERS, BOT_LEVELS, BOT_LEVEL_ORDER, ruleSet, mutateStats } from './rooms.js';
+import { drawEmblem, TRAILS } from './cosmetics.js';
+import { isTouchDevice, initTouch } from './touch.js';
+import { readGamepad, rumble } from './gamepad.js';
+import { saveReplay } from './theater.js';
 import {
   clamp, lerp, rand, randInt, pick, dist, dist2, angleDiff, angleLerp,
   makeRng, fmt, $,
@@ -39,18 +45,59 @@ const SPAWNS = [
 const TANK_FWD = (a) => ({ x: Math.sin(a), y: -Math.cos(a) });
 
 const INTRO_DUR = 3.1;
-const MAPS = [
-  'ASHFORD RIDGE', 'SECTOR 7 BLACKSITE', 'KURSK LINE', 'DUNE BASIN',
-  'FROZEN CROSSING', 'RUINED FOUNDRY', 'RED VALLEY', 'OUTPOST 12',
-];
+
+const PRACTICE_MODE = {
+  id: 'practice', name: 'ACADEMY', tag: 'TRAINING', icon: 'shield',
+  blurb: 'No score, no rewards, unlimited respawns.', rules: 'TRAINING DRILL',
+  objective: 'DRILL', target: 0, duration: 0, bots: 0, teams: false,
+  zone: true, accent: '#8fe86b', reward: 0,
+};
+
+const ABILITIES = {
+  supply: { key: '1', name: 'SUPPLY', cost: 1, color: '#e8c96a' },
+  smoke: { key: '2', name: 'SMOKE', cost: 2, color: '#b9c6cc' },
+  artillery: { key: '3', name: 'ARTILLERY', cost: 3, color: '#e0806a' },
+};
+
+// Accessibility: shape-coded teams, not colour alone.
+const TEAM_MARKS = ['▲', '●'];
+const TEAM_COLORS = ['#8fbf5f', '#e0956a'];
+const CB_TEAM_COLORS = ['#6ab0ff', '#ffb066'];
 
 export class Arena {
-  constructor({ onExit, onReport, mode = 'deathmatch', room = null } = {}) {
+  constructor({ onExit, onReport, mode = 'deathmatch', room = null, training = null, ranked = false } = {}) {
     this.onExit = onExit;
     this.onReport = onReport;
-    this.room = room || { mode, name: 'ALPHA', key: `${mode}:alpha` };
-    this.modeId = mode;
-    this.mode = modeFor(mode);
+    this.training = training || null;
+    this.ranked = !!ranked;
+    this.room = room || { mode, name: this.training ? 'ACADEMY' : 'ALPHA', key: this.training ? 'training' : `${mode}:alpha` };
+    this.modeId = this.training ? 'practice' : mode;
+    this.mode = this.training
+      ? { ...PRACTICE_MODE, name: this.training === 'range' ? 'FREE-FIRE RANGE' : 'ACADEMY' }
+      : modeFor(mode);
+    this.rules = ruleSet(this.room.rules);
+    this.mutator = MUTATORS[this.rules.mutator] || MUTATORS.standard;
+    this.map = mapFor(this.rules.map === 'rotate' ? pickMap(this.room.name).id : this.rules.map);
+    this.mapId = this.map.id;
+    this.mapName = this.map.name;
+    this.hostId = null;
+    this.isHost = false;
+    this.touch = null;
+    this.bounty = null;
+    this.strikes = [];
+    this.eventTimer = 0;
+    this.salvageFound = 0;
+    this.eventTimer = rand(26, 18);
+    this.commandPoints = 0;
+    this.cmdMax = 3;
+    this.cmdRegen = 9;
+    this.smoke = [];
+    this.drill = { dist: 0, shots: 0, dash: 0, hold: 0, step: 0, done: false };
+    this.padPrev = {};
+    this.padConnected = false;
+    this.matchBuf = [];
+    this.matchAcc = 0;
+    this.theaterSaved = false;
     this.matchLen = this.mode.duration || 0;
     this.remaining = this.mode.duration || 0;
     this.ended = false;
@@ -63,7 +110,9 @@ export class Arena {
     this.wave = 0;
     this.waveTimer = 0;
     this.lives = this.mode.waves ? 3 : Infinity;
-    this.weather = pick(['clear', 'clear', 'clear', 'rain', 'fog', 'dusk']);
+    this.weather = this.rules.weather === 'random'
+      ? pick(['clear', 'clear', 'clear', 'rain', 'fog', 'dusk'])
+      : this.rules.weather;
     this.recentKills = [];
     this.graveyard = [];
     this.canvas = $('#arena-canvas');
@@ -84,8 +133,12 @@ export class Arena {
       mode: $('#hud-mode'), objective: $('#hud-objective'),
       objectiveLabel: $('#hud-objective-label'), remaining: $('#hud-remaining'),
       modebar: $('#hud-modebar'), medals: $('#hud-medals'), lives: $('#hud-lives'),
+      abilities: $('#hud-abilities'), academy: $('#academy'),
+      academyTitle: $('#academy-title'), academySub: $('#academy-sub'),
+      academyStep: $('#academy-stepno'), academyFill: $('#academy-fill'),
       spectate: $('#hud-spectate'), spectateName: $('#hud-spectate-name'),
-      room: $('#hud-room'),
+      room: $('#hud-room'), rule: $('#hud-rule'),
+      hostBody: $('#hud-host-body'), hostWrap: $('#hud-host'), hostTag: $('#hud-host-tag'),
     };
 
     this.running = false;
@@ -118,6 +171,7 @@ export class Arena {
     this.startAt = 0;
     this.stats = { kills: 0, deaths: 0, score: 0, bestStreak: 0, shots: 0, hits: 0 };
     this.hud.modebar?.setAttribute('data-mode', this.modeId);
+    this.hud.modebar?.classList.toggle('practice', !!this.training);
     this.punch = 0;          // zoom punch (fire / kill)
     this.hitstop = 0;        // brief freeze on a kill
     this.hpShown = null;     // smoothed health for the HUD bar
@@ -132,7 +186,7 @@ export class Arena {
     this.streakFxEl = null;
     this.introT = INTRO_DUR;
     this.introScale = 1;
-    this.mapName = pick(MAPS);
+    this.mapName = this.map.name;
     this.spectateIdx = 0;
 
     this._bind();
@@ -173,18 +227,33 @@ export class Arena {
     this.setupMode();
 
     this.hud.chatWrap?.classList.add('hidden');
+    this.hud.hostWrap?.classList.toggle('hidden', !!this.training);
     this.hud.pause?.classList.add('hidden');
     this.hud.respawn?.classList.add('hidden');
     if (this.hud.room) this.hud.room.textContent = this.room.name;
+    if (this.hud.rule) {
+      this.hud.rule.textContent = this.mutator.id === 'standard' ? '' : this.mutator.name;
+      this.hud.rule.style.color = this.mutator.color;
+    }
+    if (isTouchDevice()) this.touch = initTouch(this);
+    this.hud.academy?.classList.toggle('hidden', !this.training);
 
-    this.connect();
+    if (this.training) {
+      this.commandPoints = 3;
+      this.hud.online.textContent = 'PRACTICE';
+      this.hud.academy?.classList.remove('hidden');
+      this.renderAcademy();
+    } else {
+      this.connect();
+    }
 
     this.running = true;
     this.startAt = performance.now() + 1;
-    this.mapName = pick(MAPS);
+    this.mapName = this.map.name;
     this.spectateIdx = 0;
     // The deploy cinematic holds the match clock and input until it ends.
-    this.introT = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? INTRO_DUR : 0;
+    this.introT = this.training || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? INTRO_DUR : 0;
+    if (this.training) { this.introT = INTRO_DUR; this.introScale = 1; $('#hud')?.classList.remove('intro'); }
     this.introScale = this.introT >= INTRO_DUR ? 1 : 0.86;
     $('#hud')?.classList.toggle('intro', this.introT < INTRO_DUR);
     if (this.introT < INTRO_DUR) audio.play('reload');
@@ -195,6 +264,8 @@ export class Arena {
   stop() {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    this.touch?.destroy();
+    this.touch = null;
     this.net?.leave();
     this.net = null;
     window.removeEventListener('resize', this._onResize);
@@ -202,9 +273,20 @@ export class Arena {
 
   report() {
     const s = this.stats;
-    const won = this.result
-      ? this.result.won
-      : (this.mode.teams ? this.teamScore[0] > this.teamScore[1] : s.kills >= 3 && s.kills > s.deaths);
+    if (this.training) {
+      return {
+        practice: true, training: this.training,
+        kills: s.kills, deaths: s.deaths, score: s.score,
+        mode: 'practice', modeName: this.mode.name,
+        map: this.map.name, mapId: this.mapId,
+        room: { mode: 'deathmatch', name: 'ACADEMY', rules: this.rules },
+        seconds: Math.max(1, Math.floor((performance.now() - this.startAt - 1) / 1000)),
+        won: true, bestStreak: s.bestStreak, shots: s.shots, hits: s.hits,
+        accuracy: s.shots ? Math.round((s.hits / s.shots) * 100) : 0,
+        credits: 0, xp: 0, salvage: 0, replay: null,
+      };
+    }
+    const won = this.result ? this.result.won : false;
     const mult = this.mode.reward || 1;
     const credits = Math.round((30 + s.kills * 14 + (won ? 180 : 0) + Math.floor(s.score / 25)) * mult);
     const xp = Math.round((40 + s.kills * 22 + (won ? 120 : 0) + Math.floor(s.score / 60)) * mult);
@@ -213,9 +295,14 @@ export class Arena {
       kills: s.kills, deaths: s.deaths, score: s.score,
       bestStreak: s.bestStreak, seconds, won, credits, xp,
       mode: this.mode.id, modeName: this.mode.name,
-      verdict: this.result?.label || null, wave: this.wave,
+      verdict: this.result?.label || (this.ended ? null : 'WITHDREW FROM BATTLE'), wave: this.wave,
       teamScore: this.teamScore.slice(),
-      room: { mode: this.room.mode, name: this.room.name },
+      room: { mode: this.room.mode, name: this.room.name, rules: this.rules },
+      map: this.map.name, mapId: this.mapId,
+      mutator: this.mutator.id, mutatorName: this.mutator.name,
+      hosted: this.isHost, shots: s.shots, hits: s.hits,
+      ranked: this.ranked,
+      salvage: this.salvageFound,
       replay: this.replay || (this.replayBuf.length ? this.compileReplay() : null),
       accuracy: s.shots ? Math.round((s.hits / s.shots) * 100) : 0,
     };
@@ -228,12 +315,21 @@ export class Arena {
     const m = this.mode;
     this.me.team = 0;
     this.me.skin = state.profile.skin || 'olive';
-    if (m.zone) this.zone = { x: WORLD.size / 2, y: WORLD.size / 2, r: 235 };
+    if (m.zone) this.zone = { x: WORLD.size / 2, y: WORLD.size / 2, r: this.training ? 190 : 235 };
     if (this.hud.mode) this.hud.mode.textContent = m.name;
+    if (this.training) {
+      this.spawnDummies(this.training === 'academy' ? 4 : 8);
+      return;
+    }
+    // A host-set score limit overrides the warzone default.
+    if (this.rules.limit && !m.waves && !m.zone) {
+      this.mode = { ...m, target: this.rules.limit };
+    }
     if (m.waves) {
       this.nextWave();
     } else {
-      this.spawnBots(this.settings.bots ?? m.bots, { teams: !!m.teams });
+      const bots = this.rules.bots ?? this.settings.bots ?? m.bots;
+      this.spawnBots(bots, { teams: !!m.teams });
       if (m.teams) this.balanceTeams();
     }
   }
@@ -295,7 +391,7 @@ export class Arena {
       const holder = counts[0] === counts[1] ? -1 : counts[0] > counts[1] ? 0 : 1;
       this.zoneHolder = holder;
       this.zoneCounts = counts;
-      if (holder >= 0) this.zonePts[holder] += dt * (7 + Math.max(0, counts[holder] - 1) * 3);
+      if (holder >= 0) this.zonePts[holder] += dt * 4;
       if (this.zonePts[0] >= m.target) { this.endMatch(true, 'ZONE SECURED'); return; }
       if (this.zonePts[1] >= m.target) { this.endMatch(false, 'ZONE LOST'); return; }
     }
@@ -332,6 +428,11 @@ export class Arena {
 
   finishByTime() {
     const m = this.mode;
+    if (m.zone) {
+      const win = this.zonePts[0] > this.zonePts[1];
+      this.endMatch(win, win ? 'ZONE SECURED' : 'ZONE LOST');
+      return;
+    }
     if (m.teams) {
       const win = this.teamScore[0] > this.teamScore[1];
       this.endMatch(win, win ? 'SQUADRON VICTORY' : 'SQUADRON DEFEAT');
@@ -343,9 +444,10 @@ export class Arena {
   }
 
   endMatch(won, label) {
-    if (this.ended) return;
+    if (this.ended || this.training) return;
     this.ended = true;
     this.replay = this.compileReplay();
+    this.saveTheater();
     this.result = { won: !!won, label: label || (won ? 'VICTORY' : 'DEFEAT') };
     this.input.firing = false;
     this.hud.spectate?.classList.add('hidden');
@@ -378,6 +480,7 @@ export class Arena {
   // ----------------------------------------------------------------
   genWorld(seed) {
     const rng = makeRng(seed);
+    const map = this.map;
     this.obstacles = [];
     this.decals = [];
     this.tileSeed = seed;
@@ -415,7 +518,7 @@ export class Arena {
       dist(x, y, WORLD.size / 2, WORLD.size / 2) > 120;
 
     // clusters
-    for (let c = 0; c < 26; c++) {
+    for (let c = 0; c < Math.round(26 * (map.clutter || 1)); c++) {
       const cx = 220 + rng() * (WORLD.size - 440);
       const cy = 220 + rng() * (WORLD.size - 440);
       if (!clearOfSpawns(cx, cy)) continue;
@@ -430,8 +533,13 @@ export class Arena {
         );
       }
     }
+    // authored landmarks give each map its silhouette
+    for (const lm of map.landmarks || []) {
+      add(lm.x, lm.y, lm.type, lm.size, lm.opts || {});
+    }
+
     // scattered singles
-    for (let i = 0; i < 55; i++) {
+    for (let i = 0; i < Math.round(55 * (map.clutter || 1)); i++) {
       const x = 160 + rng() * (WORLD.size - 320);
       const y = 160 + rng() * (WORLD.size - 320);
       if (!clearOfSpawns(x, y)) continue;
@@ -443,7 +551,7 @@ export class Arena {
     const N = Math.ceil(WORLD.size / WORLD.tile);
     this.tN = N;
     this.terrain = new Uint8Array(N * N);
-    for (let b = 0; b < 10; b++) {
+    for (let b = 0; b < (map.sand || 10); b++) {
       const cx = 1 + Math.floor(rng() * (N - 2));
       const cy = 1 + Math.floor(rng() * (N - 2));
       const r = 1.7 + rng() * 2.6;
@@ -482,12 +590,15 @@ export class Arena {
   //  entities
   // ----------------------------------------------------------------
   makeTank({ uid, name, stats, level, local = false, color, x = 0, y = 0, remote = false, bot = false, team = 0, skin }) {
+    const applied = mutateStats(stats, this.rules.mutator);
     return {
-      uid, name, stats, level, local, remote, bot, team,
+      uid, name, stats: applied, level, local, remote, bot, team,
       skin: skin || stats.skin || 'olive',
       color: color || pick(PALETTE),
       x, y, angle: 0, turret: 0, vx: 0, vy: 0,
-      hp: stats.hp, maxHp: stats.hp,
+      baseStats: stats, hp: applied.hp, maxHp: applied.hp,
+      emblem: local ? (state.local?.cosmetics?.emblem || 'none') : (stats.emblem || 'none'),
+      trail: local ? (state.local?.cosmetics?.trail || 'none') : 'none',
       reloadT: 0, alive: true, respawnT: 0, invuln: 0,
       shieldUntil: 0, rapidUntil: 0, tripleUntil: 0, boostUntil: 0,
       dashReady: 0, dashing: 0,
@@ -500,7 +611,8 @@ export class Arena {
   }
 
   spawnBots(count, opts = {}) {
-    const diff = clamp(0.72 + (this.me?.level || 1) * 0.012, 0.72, 0.95);
+    const level = BOT_LEVELS[this.rules.difficulty] || BOT_LEVELS.regular;
+    const diff = clamp(0.72 + (this.me?.level || 1) * 0.012, 0.72, 0.95) * level.damage;
     // Distinct callsigns, farthest spawns from the player first.
     const names = BOT_NAMES.slice().sort(() => Math.random() - 0.5);
     const spots = SPAWNS.slice().sort(
@@ -513,8 +625,8 @@ export class Arena {
       const stats = {
         ...base,
         damage: base.damage * diff,
-        reload: base.reload * 1.45,
-        hp: Math.round(base.hp * 0.9),
+        reload: base.reload * (1.45 / level.speed),
+        hp: Math.round(base.hp * (0.9 + (level.damage - 0.65) * 0.35)),
       };
       const spot = spots[i % spots.length];
       const b = this.makeTank({
@@ -525,8 +637,196 @@ export class Arena {
         x: spot.x + rand(90, -90), y: spot.y + rand(90, -90),
       });
       b.hp = b.maxHp;
+      b.ai.level = level.id;
+      b.ai.personality = ['aggressive', 'cautious', 'objective'][i % 3];
       this.tanks.push(b);
     }
+  }
+
+  // ----------------------------------------------------------------
+  //  command abilities, training, gamepad
+  // ----------------------------------------------------------------
+  pollPad() {
+    const pad = readGamepad();
+    this.input.pad = pad.connected ? pad : null;
+    if (!pad.connected) {
+      this.padPrev = {};
+      this.padConnected = false;
+      return;
+    }
+    if (!this.padConnected) {
+      this.padConnected = true;
+      this.announce('GAMEPAD CONNECTED', 1200);
+    }
+    const edge = (name, fn) => {
+      if (pad[name] && !this.padPrev[name]) fn();
+      this.padPrev[name] = pad[name];
+    };
+    edge('dash', () => this.tryDash());
+    edge('supply', () => this.useAbility('supply'));
+    edge('smoke', () => this.useAbility('smoke'));
+    edge('artillery', () => this.useAbility('artillery'));
+    edge('start', () => this.togglePause());
+  }
+
+  useAbility(kind) {
+    if (!this.running || this.paused || this.ended) return;
+    const ab = ABILITIES[kind];
+    if (!ab) return;
+    if (this.commandPoints < ab.cost) {
+      this.announce(`NEED ${ab.cost} COMMAND POINTS`, 1100);
+      audio.play('deny');
+      return;
+    }
+    const wm = this.screenToWorld(this.input.mx, this.input.my);
+    const x = clamp(wm.x, WORLD.wall + 100, WORLD.size - WORLD.wall - 100);
+    const y = clamp(wm.y, WORLD.wall + 100, WORLD.size - WORLD.wall - 100);
+    this.commandPoints -= ab.cost;
+    if (kind === 'supply') {
+      this.powerups.push({ x, y, kind: 'salvage', t: 0, life: 38 });
+      this.announce('SUPPLY DROP CALLED', 1500);
+      this.feed('Command supply cache marked at your marker', '#e8c96a');
+      this.mapPing = { x, y, until: this.t + 10 };
+    } else if (kind === 'smoke') {
+      for (let i = 0; i < 5; i++) {
+        this.smoke.push({
+          x: x + rand(90, -90), y: y + rand(90, -90), r: rand(130, 85),
+          until: this.t + 13, seed: Math.random() * 10,
+        });
+      }
+      this.announce('SMOKE SCREEN DEPLOYED', 1500);
+      this.feed('A smoke screen is cutting the sector in half', '#b9c6cc');
+    } else if (kind === 'artillery') {
+      this.callArtilleryAt(x, y, 5);
+    }
+    audio.play('ui');
+    if (this.settings.gamepadRumble) rumble(70, 0.5);
+  }
+
+  callArtilleryAt(x, y, n = 4) {
+    for (let i = 0; i < n; i++) {
+      this.strikes.push({
+        x: clamp(x + rand(260, -260), WORLD.wall + 140, WORLD.size - WORLD.wall - 140),
+        y: clamp(y + rand(260, -260), WORLD.wall + 140, WORLD.size - WORLD.wall - 140),
+        r: 115, at: this.t + 1.8 + i * 0.16, fired: false,
+      });
+    }
+    this.announce('ARTILLERY MARKED', 1700);
+    this.feed('Command artillery is walking shells onto your marker', '#e0806a');
+  }
+
+  inSmoke(x, y) {
+    return this.smoke.some((s) => dist2(x, y, s.x, s.y) < s.r * s.r * 0.85);
+  }
+
+  spawnDummies(n) {
+    const base = deriveStats('sherman', {});
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const radius = 470 + (i % 2) * 130;
+      const x = clamp(WORLD.size / 2 + Math.cos(a) * radius, 240, WORLD.size - 240);
+      const y = clamp(WORLD.size / 2 + Math.sin(a) * radius, 240, WORLD.size - 240);
+      const b = this.makeTank({
+        uid: 'dummy:' + i, name: 'TARGET ' + (i + 1),
+        stats: { ...base, hp: Math.round(base.hp * 2.4), damage: 0 },
+        level: 1, bot: true, team: 1, color: '#d98c7a', x, y,
+      });
+      b.dummy = true;
+      b.home = { x, y };
+      b.hp = b.maxHp;
+      b.turret = Math.PI / 2;
+      b.ai = null;
+      this.tanks.push(b);
+    }
+  }
+
+  updateTraining(dt) {
+    if (this.training !== 'academy') { if (this.frame % 20 === 0) this.renderAcademy(); return; }
+    const me = this.me;
+    if (me?.alive) this.drill.dist += Math.hypot(me.vx, me.vy) * dt;
+    const step = this.drill.step | 0;
+    if (step === 0 && this.drill.dist >= 150) this.advanceDrill(1);
+    else if (step === 1 && this.drill.shots >= 3) this.advanceDrill(2);
+    else if (step === 2 && this.zone && me?.alive) {
+      const inside = dist2(me.x, me.y, this.zone.x, this.zone.y) < this.zone.r * this.zone.r;
+      this.drill.hold = inside ? this.drill.hold + dt : Math.max(0, this.drill.hold - dt * 2);
+      if (this.drill.hold >= 3) this.advanceDrill(3);
+    }
+    if (this.frame % 10 === 0) this.renderAcademy();
+  }
+
+  advanceDrill(step) {
+    this.drill.step = step;
+    if (step >= 3) {
+      if (!this.drill.done) {
+        this.drill.done = true;
+        this.announce('ACADEMY COMPLETE', 2200);
+        this.medal('ACADEMY COMPLETE', 'READY FOR THE FRONT');
+        audio.play('victory');
+      }
+    } else {
+      audio.play('ui');
+      this.announce('DRILL COMPLETE — NEXT OBJECTIVE', 1400);
+    }
+    this.renderAcademy();
+  }
+
+  renderAcademy() {
+    const el = this.hud.academy;
+    if (!el) return;
+    el.classList.toggle('hidden', !this.training);
+    if (!this.training) return;
+    const title = this.hud.academyTitle;
+    const sub = this.hud.academySub;
+    const stepEl = this.hud.academyStep;
+    const fill = this.hud.academyFill;
+    if (this.training === 'range') {
+      if (title) title.textContent = 'FREE-FIRE RANGE';
+      if (sub) sub.textContent = 'Unlimited targets, unlimited respawns. Try every mutator and ability.';
+      if (stepEl) stepEl.textContent = '∞';
+      if (fill) fill.style.width = '100%';
+      return;
+    }
+    const steps = [
+      { title: 'DRIVE THE HULL', sub: 'Roll forward and turn 150 metres to get a feel for the tracks.', pct: this.drill.dist / 150 },
+      { title: 'FIRE AND RELOAD', sub: 'Put three shells into the target dummies. Watch the reload bar.', pct: this.drill.shots / 3 },
+      { title: 'DASH TO THE ZONE', sub: 'Dash into the marked circle and hold it for three seconds.', pct: this.drill.hold / 3 },
+    ];
+    const i = Math.min(this.drill.step | 0, 2);
+    if (this.drill.done) {
+      if (title) title.textContent = 'ACADEMY COMPLETE';
+      if (sub) sub.textContent = 'You have the hull, the gun, the dash and the objective. Try the free-fire range.';
+      if (stepEl) stepEl.textContent = '3 / 3';
+      if (fill) fill.style.width = '100%';
+      return;
+    }
+    if (title) title.textContent = steps[i].title;
+    if (sub) sub.textContent = steps[i].sub;
+    if (stepEl) stepEl.textContent = `${i + 1} / 3`;
+    if (fill) fill.style.width = Math.round(clamp(steps[i].pct, 0, 1) * 100) + '%';
+  }
+
+  updateAbilitiesHud() {
+    const el = this.hud.abilities;
+    if (!el) return;
+    const key = `${this.commandPoints}/${this.ended}`;
+    if (this._abilityKey === key) return;
+    this._abilityKey = key;
+    el.innerHTML = `<span class="cp">COMMAND <b>${this.commandPoints}</b> / ${this.cmdMax}</span>`
+      + Object.entries(ABILITIES).map(([id, a]) =>
+        `<button class="ability ${this.commandPoints >= a.cost ? 'ready' : 'locked'}" data-ability="${id}" style="--c:${a.color}">
+          <kbd>${a.key}</kbd><b>${a.name}</b><i>${a.cost} CP</i></button>`).join('');
+  }
+
+  saveTheater() {
+    if (this.theaterSaved || !this.matchBuf.length) return;
+    this.theaterSaved = true;
+    saveReplay({
+      frames: this.matchBuf.slice(),
+      obstacles: this.obstacles.map((o) => ({ x: o.x, y: o.y, type: o.type, w: o.w, h: o.h })),
+      focus: this.me ? { x: this.me.x, y: this.me.y } : { x: WORLD.size / 2, y: WORLD.size / 2 },
+      map: this.map.name, size: WORLD.size, ground: '#1b2417',
+    });
   }
 
   // ----------------------------------------------------------------
@@ -534,6 +834,9 @@ export class Arena {
   // ----------------------------------------------------------------
   connect() {
     const me = this.me;
+    // Assume host until presence proves someone has been here longer.
+    this.isHost = true;
+    this.room = { ...this.room, rules: this.rules };
     try {
       this.net = connectArena({
         onReady: () => {
@@ -566,6 +869,13 @@ export class Arena {
           }
         },
         onChat: (c) => this.addChat(c.from, c.text),
+        onHost: (hostId, rules) => {
+          this.hostId = hostId;
+          this.isHost = hostId === state.uid;
+          if (rules) this.applyRules(rules);
+          this.renderHostPanel();
+        },
+        onRules: (rules) => this.applyRules(rules),
       }, this.room);
     } catch (e) {
       console.warn('[net]', e);
@@ -578,7 +888,8 @@ export class Arena {
     if (!uid || uid === state.uid) return;
     let t = this.remotes.get(uid);
     if (t) return;
-    const stats = deriveStats(meta.tank || 'sherman', {});      const spot = this.freeSpot(300);
+    const stats = deriveStats(meta.tank || 'sherman', {});
+    const spot = this.freeSpot(300);
     t = this.makeTank({
       uid, name: meta.name || 'UNKNOWN', stats,
       level: meta.level || 1, remote: true,
@@ -588,6 +899,8 @@ export class Arena {
       x: spot.x, y: spot.y,
     });
     t.tx = t.x; t.ty = t.y;
+    t.emblem = meta.em || 'none';
+    t.trail = meta.tr || 'none';
     t.squad = meta.squad || '';
     t.ally = !!t.squad && t.squad === (this.settings?.squad || state.settings.squad || '');
     if (t.ally) noteSquadmate(t.name);
@@ -614,6 +927,8 @@ export class Arena {
     t.kills = s.k ?? t.kills; t.score = s.s ?? t.score;
     t.name = s.n || t.name; t.level = s.l ?? t.level;
     if (s.sk) t.skin = s.sk;
+    if (s.em) t.emblem = s.em;
+    if (s.tr) t.trail = s.tr;
     if (s.tm != null) t.team = s.tm;
     t.lastSeen = performance.now();
     if (t.hp > 0 && !t.alive) this.reviveRemote(t);
@@ -629,6 +944,7 @@ export class Arena {
       x: t.x + f.x * len, y: t.y + f.y * len,
       vx: f.x * 820, vy: f.y * 820,
       owner: t, dmg: 0, life: 1.3, color: t.color, visual: true, r: 4,
+      trail: s.tr || t.trail || 'none',
     });
     this.muzzleFlash(t, s.a ?? t.turret);
     audio.play('cannon');
@@ -660,6 +976,7 @@ export class Arena {
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
 
+    const kb = () => ({ ...DEFAULT_KEYS, ...(this.settings.keys || {}) });
     this._onKeyDown = (e) => {
       if (this.chatOpen) {
         if (e.key === 'Escape') this.closeChat();
@@ -667,16 +984,21 @@ export class Arena {
         return;
       }
       const k = e.key.toLowerCase();
-      if (['w', 'a', 's', 'd', ' ', 'tab', 'shift', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
-      if (this.me && !this.me.alive && !this.ended && (k === 'a' || k === 'd')) {
-        this.cycleSpectate(k === 'd' ? 1 : -1);
+      const keys = kb();
+      const bound = [keys.up, keys.down, keys.left, keys.right, keys.dash, keys.chat, keys.board];
+      if (bound.includes(k) || [' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+      if (this.me && !this.me.alive && !this.ended && (k === keys.left || k === keys.right)) {
+        this.cycleSpectate(k === keys.right ? 1 : -1);
       }
       this.input.keys.add(k);
       if (k === 'escape') this.togglePause();
-      if (k === 'enter') this.openChat();
-      if (k === 'tab') $('#hud-board')?.classList.add('expanded');
-      if (k === 'shift') this.tryDash();
-      if (k === 'm') {
+      if (k === keys.chat) this.openChat();
+      if (k === keys.board) $('#hud-board')?.classList.add('expanded');
+      if (k === keys.dash) this.tryDash();
+      if (k === '1') this.useAbility('supply');
+      if (k === '2') this.useAbility('smoke');
+      if (k === '3') this.useAbility('artillery');
+      if (k === 'm' && !bound.includes('m')) {
         this.settings.music = this.settings.music > 0 ? 0 : 0.3;
         audio.set(this.settings);
         this.announce(this.settings.music ? 'MUSIC ON' : 'MUSIC OFF', 900);
@@ -684,8 +1006,9 @@ export class Arena {
     };
     this._onKeyUp = (e) => {
       const k = e.key.toLowerCase();
+      const keys = kb();
       this.input.keys.delete(k);
-      if (k === 'tab') $('#hud-board')?.classList.remove('expanded');
+      if (k === keys.board) $('#hud-board')?.classList.remove('expanded');
     };
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
@@ -707,6 +1030,26 @@ export class Arena {
 
     $('#hud-resume')?.addEventListener('click', () => this.togglePause());
     $('#hud-leave')?.addEventListener('click', () => this.leave());
+    this.hud.abilities?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-ability]');
+      if (btn) this.useAbility(btn.dataset.ability);
+    });
+    $('#academy-exit')?.addEventListener('click', () => this.leave());
+    $('#academy-range')?.addEventListener('click', () => {
+      document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'range', map: this.rules.map } }));
+    });
+    this.hud.hostBody?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-rule]');
+      if (!btn) return;
+      const rule = btn.dataset.rule;
+      let value = btn.dataset.value;
+      if (value === 'auto') value = null;
+      else if (value === 'mode') value = null;
+      else if (/^-?\d+$/.test(value)) value = parseInt(value, 10);
+      if (rule === 'bots' && value === null) value = null;
+      if (rule === 'limit' && value === null) value = null;
+      this.updateRule(rule, value);
+    });
     this.hud.chatInput?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.submitChat();
       if (e.key === 'Escape') this.closeChat();
@@ -735,7 +1078,9 @@ export class Arena {
     if (!me?.alive || this.t < me.dashReady) return;
     me.dashReady = this.t + 3.2;
     me.dashing = 0.18;
+    this.drill.dash += 1;
     audio.play('dash');
+    if (this.settings.gamepadRumble) rumble(45, 0.35);
     for (let i = 0; i < 10; i++) {
       this.particles.push({
         x: me.x + rand(24, -24), y: me.y + rand(24, -24),
@@ -749,7 +1094,191 @@ export class Arena {
     if (!this.running) return;
     this.paused = !this.paused;
     this.hud.pause?.classList.toggle('hidden', !this.paused);
+    if (this.paused) this.renderHostPanel();
     audio.play(this.paused ? 'uiBack' : 'ui');
+  }
+
+  // Pull the aim a few degrees toward the nearest enemy when assist is on.
+  assistAim(aim) {
+    const me = this.me;
+    if (!me) return aim;
+    let best = null;
+    let bestDiff = 0.2;
+    for (const t of this.tanks) {
+      if (t === me || !t.alive) continue;
+      if (this.mode.teams && t.team === me.team) continue;
+      if (dist(me.x, me.y, t.x, t.y) > 780) continue;
+      const a = Math.atan2(t.x - me.x, -(t.y - me.y));
+      const diff = Math.abs(angleDiff(aim, a));
+      if (diff < bestDiff) { bestDiff = diff; best = a; }
+    }
+    return best == null ? aim : angleLerp(aim, best, 0.55);
+  }
+
+  // ----------------------------------------------------------------
+  //  server rules (host)
+  // ----------------------------------------------------------------
+  applyRules(raw) {
+    const next = ruleSet(raw);
+    const changed = JSON.stringify(next) !== JSON.stringify(this.rules);
+    this.rules = next;
+    this.mutator = MUTATORS[next.mutator] || MUTATORS.standard;
+    if (next.weather !== 'random') this.weather = next.weather;
+    const baseMode = modeFor(this.modeId);
+    this.mode = next.limit && !baseMode.waves && !baseMode.zone
+      ? { ...baseMode, target: next.limit }
+      : baseMode;
+    for (const t of this.tanks) {
+      if (t.remote) continue;
+      const base = t.baseStats || t.stats;
+      const pct = t.maxHp ? t.hp / t.maxHp : 1;
+      t.stats = mutateStats(base, next.mutator);
+      t.maxHp = t.stats.hp;
+      t.hp = Math.min(t.maxHp, Math.max(1, t.maxHp * pct));
+    }
+    if (this.hud.rule) {
+      this.hud.rule.textContent = this.mutator.id === 'standard' ? '' : this.mutator.name;
+      this.hud.rule.style.color = this.mutator.color;
+    }
+    if (changed) this.syncBotCount();
+    this.renderHostPanel();
+  }
+
+  updateRule(rule, value) {
+    if (!this.isHost) {
+      this.announce('ONLY THE HOST CAN CHANGE RULES', 1500);
+      audio.play('deny');
+      return;
+    }
+    const next = ruleSet({ ...this.rules, [rule]: value });
+    this.net?.sendRules(next);
+    this.applyRules(next);
+    audio.play('ui');
+    if (rule === 'map') this.announce('MAP SET FOR NEXT DEPLOY', 1500);
+  }
+
+  syncBotCount() {
+    if (this.mode.waves) return;
+    const target = this.rules.bots ?? this.settings.bots ?? this.mode.bots ?? 0;
+    const bots = this.tanks.filter((t) => t.bot);
+    if (bots.length < target) {
+      this.spawnBots(target - bots.length, { teams: !!this.mode.teams });
+      if (this.mode.teams) this.balanceTeams();
+    } else if (bots.length > target) {
+      const extra = new Set(bots.slice(0, bots.length - target));
+      this.tanks = this.tanks.filter((t) => !extra.has(t));
+    }
+  }
+
+  renderHostPanel() {
+    const body = this.hud.hostBody;
+    if (!body) return;
+    const r = this.rules;
+    const dis = this.isHost ? '' : 'disabled';
+    const chip = (rule, value, label, on) =>
+      `<button class="hchip ${on ? 'on' : ''}" data-rule="${rule}" data-value="${value}" ${dis}>${label}</button>`;
+    if (this.hud.hostTag) {
+      this.hud.hostTag.textContent = this.isHost ? 'YOU ARE HOST' : 'HOST CONTROLS';
+      this.hud.hostTag.classList.toggle('mine', this.isHost);
+    }
+    body.innerHTML = `
+      <div class="host-row"><span>MUTATOR</span><div class="host-chips">${MUTATOR_ORDER
+        .map((id) => chip('mutator', id, MUTATORS[id].name, r.mutator === id)).join('')}</div></div>
+      <div class="host-row"><span>MAP</span><div class="host-chips">${['rotate', ...MAP_LIST]
+        .map((id) => chip('map', id, id === 'rotate' ? 'ROTATE' : MAP_DEFS[id].name.split(' ')[0], r.map === id)).join('')}</div></div>
+      <div class="host-row"><span>BOTS</span><div class="host-chips">${[['auto', null], ['0', 0], ['3', 3], ['6', 6], ['9', 9]]
+        .map(([label, val]) => chip('bots', label, label.toUpperCase() === 'AUTO' ? 'AUTO' : label, r.bots === val)).join('')}</div></div>
+      <div class="host-row"><span>BOT SKILL</span><div class="host-chips">${BOT_LEVEL_ORDER
+        .map((id) => chip('difficulty', id, BOT_LEVELS[id].name, r.difficulty === id)).join('')}</div></div>
+      <div class="host-row"><span>WEATHER</span><div class="host-chips">${WEATHERS
+        .map((id) => chip('weather', id, id.toUpperCase(), r.weather === id)).join('')}</div></div>
+      <div class="host-row"><span>SCORE LIMIT</span><div class="host-chips">${[['mode', null], ['15', 15], ['25', 25], ['40', 40]]
+        .map(([label, val]) => chip('limit', label, label === 'mode' ? 'MODE' : label, r.limit === val)).join('')}</div></div>
+      <p class="host-note">${this.isHost ? 'Changes broadcast to everyone in this server.' : 'Only the host can change these.'} Mutator and limit apply instantly; map applies next deploy.</p>`;
+  }
+
+  // ----------------------------------------------------------------
+  //  mid-match events
+  // ----------------------------------------------------------------
+  updateEvents(dt) {
+    if (this.ended) return;
+
+    for (let i = this.strikes.length - 1; i >= 0; i--) {
+      const s = this.strikes[i];
+      if (this.t >= s.at && !s.fired) {
+        s.fired = true;
+        this.explodeAt(s.x, s.y, 1.5);
+        this.areaDamage(s.x, s.y, s.r * 0.6, 62);
+        this.shake = Math.max(this.shake, 14 * this.settings.shake);
+      }
+      if (this.t >= s.at + 0.5) this.strikes.splice(i, 1);
+    }
+
+    if (this.bounty && this.t >= this.bounty.until) {
+      this.announce('BOUNTY EXPIRED', 1400);
+      this.bounty = null;
+    }
+
+    this.eventTimer -= dt;
+    if (this.eventTimer > 0) return;
+    this.eventTimer = rand(44, 26) * (this.rules.mutator === 'chaos' ? 0.65 : 1);
+    const roll = Math.random();
+    if (roll < 0.34) this.supplyDropEvent();
+    else if (roll < 0.68) this.bountyEvent();
+    else this.artilleryEvent();
+  }
+
+  supplyDropEvent() {
+    const spot = this.freeSpot(220);
+    this.powerups.push({ x: spot.x, y: spot.y, kind: 'salvage', t: 0, life: 42 });
+    this.announce('SUPPLY DROP MARKED', 1700);
+    this.feed('A supply cache has been marked on the map', '#e8c96a');
+    this.mapPing = { x: spot.x, y: spot.y, until: this.t + 8 };
+  }
+
+  bountyEvent() {
+    const leader = this.tanks
+      .filter((t) => t.alive && t.kills > 0)
+      .sort((a, b) => b.kills - a.kills)[0];
+    if (!leader) return;
+    this.bounty = { uid: leader.uid, name: leader.name, until: this.t + 30 };
+    this.announce(`${leader.name} HAS A BOUNTY`, 1900);
+    this.feed(`<b>${esc(leader.name)}</b> is worth <b>+300</b> — hunt them down`, '#e8c96a');
+    this.medal('BOUNTY POSTED', leader.name + ' · +300');
+  }
+
+  artilleryEvent() {
+    const pool = this.tanks.filter((t) => t.alive);
+    if (!pool.length) return;
+    const focus = pick(pool);
+    const n = 3 + (Math.random() < 0.4 ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      this.strikes.push({
+        x: clamp(focus.x + rand(300, -300), WORLD.wall + 140, WORLD.size - WORLD.wall - 140),
+        y: clamp(focus.y + rand(300, -300), WORLD.wall + 140, WORLD.size - WORLD.wall - 140),
+        r: 115, at: this.t + 2.6 + i * 0.18, fired: false,
+      });
+    }
+    this.announce('ARTILLERY INBOUND', 1900);
+    this.feed('Artillery is walking shells across the sector', '#e0806a');
+  }
+
+  killBurst(x, y) {
+    const fx = state.local?.cosmetics?.killfx || 'none';
+    if (fx === 'none') return;
+    if (fx === 'ring' || fx === 'nova') {
+      this.fxList.push({ ring: fx, x, y, life: 0.7, maxLife: 0.7, scale: fx === 'nova' ? 1.5 : 1 });
+    }
+    if (fx === 'shards' || fx === 'nova') {
+      for (let i = 0; i < (fx === 'nova' ? 22 : 14); i++) {
+        const a = rand(Math.PI * 2, 0), s = rand(520, 180);
+        this.particles.push({
+          x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+          life: rand(0.7, 0.3), maxLife: 0.7, size: rand(9, 3),
+          color: i % 2 ? 'rgba(255,232,180,0.9)' : 'rgba(255,170,80,0.85)',
+        });
+      }
+    }
   }
 
   openChat() {
@@ -805,6 +1334,8 @@ export class Arena {
       return;
     }
 
+    this.pollPad();
+
     // game feel: a short freeze on kills, and slow motion while the match ends
     if (this.hitstop > 0) {
       this.hitstop -= dt;
@@ -822,6 +1353,10 @@ export class Arena {
       if (k.has('a') || k.has('arrowleft')) ix -= 1;
       if (k.has('d') || k.has('arrowright')) ix += 1;
       if (this.chatOpen) { ix = 0; iy = 0; }
+      const tv = this.input.touch;
+      if (tv && Math.hypot(tv.x, tv.y) > 0.16) { ix += tv.x; iy += tv.y; }
+      const pad = this.input.pad;
+      if (pad && (pad.x || pad.y)) { ix += pad.x; iy += pad.y; }
 
       const mag = Math.hypot(ix, iy);
       if (mag > 0) {
@@ -846,12 +1381,19 @@ export class Arena {
       me.y += me.vy * dt;
       this.collideWorld(me);
 
-      // turret aim
-      const wm = this.screenToWorld(this.input.mx, this.input.my);
-      const aim = Math.atan2(wm.x - me.x, -(wm.y - me.y));
+      // turret aim (mouse, right stick, or touch aiming)
+      const padAim = this.input.pad && Math.hypot(this.input.pad.aimX, this.input.pad.aimY) > 0.24;
+      let aim;
+      if (padAim) {
+        aim = Math.atan2(this.input.pad.aimX, -this.input.pad.aimY);
+      } else {
+        const wm = this.screenToWorld(this.input.mx, this.input.my);
+        aim = Math.atan2(wm.x - me.x, -(wm.y - me.y));
+      }
+      if (this.settings.aimAssist) aim = this.assistAim(aim);
       me.turret = angleLerp(me.turret, aim, clamp(9 * dt, 0, 1));
 
-      if (this.input.firing && !this.chatOpen) this.fire(me);
+      if ((this.input.firing || this.input.pad?.fire) && !this.chatOpen) this.fire(me);
       if (me.dashing > 0) me.dashing = Math.max(0, me.dashing - dt);
 
       // track marks
@@ -878,7 +1420,7 @@ export class Arena {
     }
 
     // ---- bots
-    for (const b of this.tanks) if (b.bot && b.alive) this.updateBot(b, dt);
+    for (const b of this.tanks) if (b.bot && b.alive && !b.dummy) this.updateBot(b, dt);
 
     // ---- timers / fx
     for (const t of this.tanks) {
@@ -1050,11 +1592,22 @@ export class Arena {
         h: Math.round(me.hp), mh: Math.round(me.maxHp),
         k: this.stats.kills, s: this.stats.score,
         sk: me.skin, tm: me.team, mo: this.modeId,
+        em: me.emblem, tr: me.trail,
       });
     }
 
     this.recordReplay(dt);
-    this.updateMode(dt);
+    if (this.training) this.updateTraining(dt);
+    else {
+      this.updateEvents(dt);
+      this.updateMode(dt);
+    }
+    this.smoke = this.smoke.filter((s) => s.until > this.t);
+    this.cmdRegen -= dt;
+    if (this.cmdRegen <= 0 && this.commandPoints < this.cmdMax) {
+      this.commandPoints += 1;
+      this.cmdRegen = 9;
+    }
     this.updateHud();
   }
 
@@ -1096,7 +1649,7 @@ export class Arena {
         x: sx, y: sy,
         vx: ff.x * t.stats.shellSpeed, vy: ff.y * t.stats.shellSpeed,
         owner: t, dmg: t.stats.damage, life: 1.35,
-        color: t.color, r: 5, mine: t.local,
+        color: t.color, r: 5, mine: t.local, trail: t.trail || 'none',
       });
     }
     this.muzzleFlash(t, t.turret);
@@ -1105,6 +1658,7 @@ export class Arena {
     audio.play('cannon');
     if (t.local) {
       this.stats.shots += 1;
+      this.drill.shots += 1;
       this.net?.sendFire({ x: sx, y: sy, a: t.turret });
       // recoil
       t.vx -= f.x * 26; t.vy -= f.y * 26;
@@ -1150,7 +1704,7 @@ export class Arena {
       return;
     }
 
-    this.damageTank(t, dmg, this.me, b.mine);
+    this.damageTank(t, dmg, b.owner, b.mine);
   }
 
   predictRemoteKill(t) {
@@ -1158,7 +1712,8 @@ export class Arena {
     t.alive = false;
     t.hp = 0;
     this.explodeAt(t.x, t.y, 1.1);
-    this.creditKill(this.me, t.name);
+    this.creditKill(this.me, t.name, t.uid);
+    this.killBurst(t.x, t.y);
     this.net?.sendKill({ victim: t.uid, victimName: t.name });
     clearTimeout(t._reviveTimer);
     t._reviveTimer = setTimeout(() => {
@@ -1212,14 +1767,26 @@ export class Arena {
       } else {
         t.respawnT = rand(4.5, 2.5);
       }
-      if (credit) this.creditKill(from, t.name);
+      if (credit) {
+        this.creditKill(from, t.name, t.uid);
+        if (from?.local) this.killBurst(t.x, t.y);
+      }
+      if (this.bounty?.uid === t.uid) this.bounty = null;
     }
   }
 
-  creditKill(killer, victimName) {
+  creditKill(killer, victimName, victimUid) {
     if (!killer) return;
     killer.streak++;
     killer.bestStreak = Math.max(killer.bestStreak, killer.streak);
+    if (this.bounty && victimUid && this.bounty.uid === victimUid) {
+      killer.score += 300;
+      if (killer.local) this.stats.score += 300;
+      this.announce('BOUNTY CLAIMED', 1800);
+      this.medal('BOUNTY CLAIMED', '+300');
+      audio.play('streak');
+      this.bounty = null;
+    }
     const mult = Math.min(1 + (killer.streak - 1) * 0.25, 3);
     const gain = Math.round(100 * mult);
     killer.score += gain;
@@ -1229,6 +1796,7 @@ export class Arena {
       this.stats.kills++;
       this.stats.score += gain;
       this.stats.bestStreak = Math.max(this.stats.bestStreak, killer.streak);
+      this.commandPoints = Math.min(this.cmdMax, this.commandPoints + 1);
       this.floater(killer.x, killer.y - 60, '+' + gain, '#8fbf5e');
       if (killer.streak >= 3) this.announce(`${killer.streak} KILL STREAK`, 1200);
 
@@ -1275,6 +1843,15 @@ export class Arena {
   }
 
   respawn(t) {
+    if (t.dummy && t.home) {
+      t.x = t.home.x; t.y = t.home.y;
+      t.vx = t.vy = 0;
+      t.hp = t.maxHp; t.alive = true;
+      t.invuln = this.t + 1.2;
+      t.spawnFx = 0.6;
+      t.turret = Math.PI;
+      return;
+    }
     let spot;
     if (this.mode.teams) {
       const pool = SPAWNS.filter((s) => (s.x > WORLD.size / 2 ? 1 : 0) === (t.team ? 1 : 0));
@@ -1348,7 +1925,11 @@ export class Arena {
       case 'boost': t.boostUntil = this.t + pu.dur; break;
       case 'salvage':
         t.score += 75;
-        if (t.local) { this.stats.score += 75; this.me.creditsFound = (this.me.creditsFound || 0) + 40; }
+        if (t.local) {
+          this.stats.score += 75;
+          this.me.creditsFound = (this.me.creditsFound || 0) + 40;
+          this.salvageFound += 60;
+        }
         break;
       default: break;
     }
@@ -1359,22 +1940,41 @@ export class Arena {
   // ----------------------------------------------------------------
   updateBot(b, dt) {
     const ai = b.ai;
+    const level = BOT_LEVELS[ai.level] || BOT_LEVELS.regular;
+    const persona = ai.personality || 'objective';
     ai.think -= dt;
 
     if (ai.think <= 0) {
       ai.think = rand(0.9, 0.35);
-      let best = null, bd = 1e9;
+      let best = null, bestScore = Infinity;
       for (const t of this.tanks) {
         if (t === b || !t.alive) continue;
         if (this.mode.waves && t !== this.me) continue;
         if (this.mode.teams && t.team === b.team) continue;
-        const d = dist2(b.x, b.y, t.x, t.y);
-        if (d < bd) { bd = d; best = t; }
+        if (this.inSmoke(t.x, t.y) && Math.random() < 0.7) continue;
+        const d = Math.sqrt(dist2(b.x, b.y, t.x, t.y));
+        // Wounded targets are worth crossing ground for.
+        const wounded = t.hp < t.maxHp * 0.35 ? 0.55 : 1;
+        const score = d * wounded;
+        if (score < bestScore) { bestScore = score; best = t; }
       }
       ai.target = best;
       if (Math.random() < 0.3) ai.strafe *= -1;
-      ai.err = rand(0.16, -0.16);
-      ai.react = rand(0.75, 0.3);
+      ai.err = rand(level.err, -level.err) + (this.inSmoke(b.x, b.y) ? 0.12 : 0);
+      ai.react = rand(1.0, 0.35) * level.react;
+
+      // Crippled bots break contact and look for a nearby hull-down spot.
+      const hurtAt = persona === 'cautious' ? 0.5 : persona === 'aggressive' ? 0.25 : 0.35;
+      ai.retreat = b.hp < b.maxHp * hurtAt && Math.random() < level.retreat;
+      ai.cover = null;
+      if (ai.retreat) {
+        let cd = 420;
+        for (const o of this.obstacles) {
+          if (!o.blocks) continue;
+          const d = dist(b.x, b.y, o.x, o.y);
+          if (d > 70 && d < cd) { cd = d; ai.cover = o; }
+        }
+      }
     }
 
     const target = ai.target;
@@ -1386,10 +1986,11 @@ export class Arena {
     }
 
     const d = dist(b.x, b.y, target.x, target.y);
-    const desired = 300 + (b.stats.radius * 2);
+    const desired = (persona === 'aggressive' ? 235 : persona === 'cautious' ? 430 : 320) + b.stats.radius * 2;
     const toward = Math.atan2(target.x - b.x, -(target.y - b.y));
     let dir = toward;
-    if (d < desired * 0.72) dir = toward + Math.PI;             // back off
+    if (ai.retreat && ai.cover) dir = Math.atan2(ai.cover.x - b.x, -(ai.cover.y - b.y));
+    else if (d < desired * 0.72) dir = toward + Math.PI;             // back off
     else if (d < desired * 1.05) dir = toward + ai.strafe * 1.45; // strafe
 
     // obstacle avoidance: steer around blocking props
@@ -1424,7 +2025,9 @@ export class Arena {
     b.turret = angleLerp(b.turret, aim, clamp(4.4 * dt, 0, 1));
 
     if (ai.react > 0) { ai.react -= dt; return; }
-    if (d < 620 && Math.abs(angleDiff(b.turret, aim)) < 0.14 && Math.random() < 0.7) {
+    const engage = ai.retreat ? 380 : 620;
+    const fireChance = level.fire * (persona === 'aggressive' ? 1.1 : persona === 'cautious' ? 0.85 : 1);
+    if (d < engage && Math.abs(angleDiff(b.turret, aim)) < 0.14 && Math.random() < (ai.retreat ? fireChance * 0.6 : fireChance)) {
       this.fire(b);
     }
   }
@@ -1603,7 +2206,10 @@ export class Arena {
     if (this.hud.objective) {
       const m = this.mode;
       let val, label;
-      if (m.zone) { val = `${Math.floor(this.zonePts[0])} : ${Math.floor(this.zonePts[1])}`; label = 'ZONE PTS'; }
+      if (this.training) {
+        val = this.training === 'range' ? 'FREE FIRE' : `DRILL ${Math.min((this.drill.step | 0) + 1, 3)} / 3`;
+        label = this.training === 'range' ? 'RANGE' : 'ACADEMY';
+      } else if (m.zone) { val = `${Math.floor(this.zonePts[0])} : ${Math.floor(this.zonePts[1])}`; label = 'ZONE PTS'; }
       else if (m.teams) { val = `${this.teamScore[0]} : ${this.teamScore[1]}`; label = 'TEAM KILLS'; }
       else if (m.waves) { val = `WAVE ${this.wave}`; label = `${this.stats.kills} KILLS`; }
       else { val = `${this.me.kills} / ${m.target}`; label = 'KILLS'; }
@@ -1616,6 +2222,7 @@ export class Arena {
         : '';
       this.hud.lives.classList.toggle('danger', this.mode.waves && this.lives <= 1);
     }
+    this.updateAbilitiesHud();
   }
 
   renderBoard() {
@@ -1669,6 +2276,7 @@ export class Arena {
 
     this.drawGround(ctx);
     this.drawDecals(ctx);
+    this.drawStrikes(ctx);
     if (this.zone) this.drawZone(ctx);
 
     // collect drawables for y-sorting
@@ -1827,10 +2435,10 @@ export class Arena {
 
     // colour grade — knocks the toy-bright tiles back into military drab
     ctx.save();
-    ctx.fillStyle = 'rgba(9, 20, 12, 0.38)';
+    ctx.fillStyle = this.map.grade || 'rgba(9, 20, 12, 0.38)';
     ctx.fillRect(left - 200, top - 200, right - left + 400, bottom - top + 400);
     const warm = ctx.createLinearGradient(left, top, right, bottom);
-    warm.addColorStop(0, 'rgba(120, 150, 90, 0.05)');
+    warm.addColorStop(0, this.map.tint || 'rgba(120, 150, 90, 0.05)');
     warm.addColorStop(1, 'rgba(10, 30, 20, 0.16)');
     ctx.fillStyle = warm;
     ctx.fillRect(left - 200, top - 200, right - left + 400, bottom - top + 400);
@@ -1984,6 +2592,15 @@ export class Arena {
     ctx.drawImage(body, -bw / 2, -bh / 2, bw, bh);
     ctx.restore();
 
+    if (t.emblem && t.emblem !== 'none') {
+      ctx.save();
+      ctx.translate(t.x, t.y);
+      ctx.rotate(t.angle);
+      ctx.globalAlpha = 0.92;
+      drawEmblem(ctx, t.emblem, t.stats.radius * 0.42, t.local ? 'rgba(242,255,224,0.95)' : 'rgba(228,236,214,0.8)');
+      ctx.restore();
+    }
+
     if (barrel) {
       const brw = barrel.width * s, brh = barrel.height * s;
       ctx.save();
@@ -2036,8 +2653,40 @@ export class Arena {
       ctx.translate(t.x, t.y - t.stats.radius - 26);
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(-w / 2 - 1, -1, w + 2, 6);
-      ctx.fillStyle = t.bot ? '#c26a5a' : '#8fe86b';
+      ctx.fillStyle = this.mode.teams ? this.teamColor(t.team) : (t.bot ? '#c26a5a' : '#8fe86b');
       ctx.fillRect(-w / 2, 0, w * pct, 4);
+      ctx.restore();
+    }
+  }
+
+  teamColor(team) {
+    if (this.settings.highContrast) return ['#00e5ff', '#ff9d00'][team ? 1 : 0];
+    const palette = this.settings.colorblind ? CB_TEAM_COLORS : TEAM_COLORS;
+    return palette[team ? 1 : 0];
+  }
+
+  drawStrikes(ctx) {
+    for (const s of this.strikes) {
+      const left = Math.max(0, s.at - this.t);
+      const p = 1 - Math.min(1, left / 2.6);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.strokeStyle = s.fired ? 'rgba(255, 140, 70, 0.5)' : 'rgba(255, 96, 60, 0.8)';
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([12, 10]);
+      ctx.lineDashOffset = -this.t * 40;
+      ctx.beginPath();
+      ctx.arc(0, 0, s.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(255, 80, 40, ${0.05 + p * 0.12})`;
+      ctx.beginPath();
+      ctx.arc(0, 0, s.r * Math.min(1, 0.25 + p), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 190, 140, 0.75)';
+      ctx.font = '10px "Share Tech Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(left > 0 ? left.toFixed(1) : 'IMPACT', 0, 4);
       ctx.restore();
     }
   }
@@ -2052,10 +2701,11 @@ export class Arena {
       ctx.font = 'bold 12px "Courier New", monospace';
       ctx.fillStyle = t.local ? '#d8f0c0'
         : t.ally ? '#b6f79a'
-        : this.mode.teams ? (t.team === 0 ? '#a8e88a' : '#e68e78')
+        : this.mode.teams ? this.teamColor(t.team)
         : t.remote ? '#9ee0ff' : '#e2d7bf';
       ctx.globalAlpha = 0.95;
-      const label = t.local ? t.name + ' (YOU)' : t.ally ? '◆ ' + t.name : t.name;
+      const mark = this.mode.teams ? TEAM_MARKS[t.team ? 1 : 0] + ' ' : '';
+      const label = t.local ? mark + t.name + ' (YOU)' : t.ally ? '◆ ' + t.name : mark + t.name;
       ctx.fillText(label, t.x, y);
       if (t.local) {
         ctx.beginPath();
@@ -2078,15 +2728,24 @@ export class Arena {
   drawBullets(ctx) {
     for (const b of this.bullets) {
       const a = Math.atan2(b.vx, -b.vy);
+      const trail = TRAILS[b.trail];
       ctx.save();
       ctx.translate(b.x, b.y);
       ctx.rotate(a);
       // tracer
-      const grad = ctx.createLinearGradient(0, 0, 0, 26);
-      grad.addColorStop(0, 'rgba(255,220,150,0.9)');
+      const grad = ctx.createLinearGradient(0, 0, 0, 30);
+      grad.addColorStop(0, trail?.color || 'rgba(255,220,150,0.9)');
       grad.addColorStop(1, 'rgba(255,160,60,0)');
       ctx.fillStyle = grad;
-      ctx.fillRect(-1.6, -4, 3.2, 26);
+      ctx.fillRect(-1.6, -4, 3.2, 30);
+      if (trail?.color) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.fillStyle = trail.color;
+        ctx.globalAlpha = 0.28;
+        ctx.fillRect(-3.4, -6, 6.8, 20);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      }
       ctx.beginPath();
       ctx.arc(0, 0, b.r || 5, 0, Math.PI * 2);
       ctx.fillStyle = '#ffe6a8';
@@ -2106,7 +2765,43 @@ export class Arena {
   }
 
   drawFx(ctx) {
+    // Smoke screens sit above the ground and soften everything behind them.
+    for (const s of this.smoke) {
+      const fade = Math.min(1, (s.until - this.t) / 2);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      for (let i = 0; i < 4; i++) {
+        const a = s.seed + i * 1.7 + this.t * 0.04;
+        const g = ctx.createRadialGradient(Math.cos(a) * s.r * 0.3, Math.sin(a) * s.r * 0.3, 4, 0, 0, s.r);
+        g.addColorStop(0, `rgba(210,218,205,${0.34 * fade})`);
+        g.addColorStop(1, 'rgba(160,170,160,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * s.r * 0.3, Math.sin(a) * s.r * 0.3, s.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
     for (const f of this.fxList) {
+      if (f.ring) {
+        const k = 1 - f.life / f.maxLife;
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        ctx.globalAlpha = Math.max(0, 1 - k) * 0.8;
+        ctx.strokeStyle = f.ring === 'nova' ? 'rgba(255, 232, 170, 0.9)' : 'rgba(180, 240, 140, 0.85)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, 26 + k * 120 * (f.scale || 1), 0, Math.PI * 2);
+        ctx.stroke();
+        if (f.ring === 'nova') {
+          ctx.globalAlpha = Math.max(0, 1 - k) * 0.35;
+          ctx.beginPath();
+          ctx.arc(0, 0, 18 + k * 160, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+        continue;
+      }
       const im = img(f.sprite);
       if (!im) continue;
       const k = 1 - f.life / f.maxLife;
@@ -2154,7 +2849,7 @@ export class Arena {
 
   flashStreak(streak) {
     const el = this.streakFxEl;
-    if (!el) return;
+    if (!el || this.settings.reduceFlash) return;
     el.dataset.level = String(Math.min(4, Math.floor(streak / 3)));
     el.classList.remove('on');
     void el.offsetWidth;
@@ -2201,6 +2896,21 @@ export class Arena {
   }
 
   recordReplay(dt) {
+    this.matchAcc = (this.matchAcc || 0) + dt;
+    if (this.matchAcc >= 0.2) {
+      this.matchAcc = 0;
+      this.matchBuf.push({
+        t: this.t,
+        tanks: this.tanks.map((t) => ({
+          x: Math.round(t.x), y: Math.round(t.y),
+          a: +t.angle.toFixed(2), tu: +t.turret.toFixed(2),
+          hp: Math.max(0, Math.round(t.hp)), alive: t.alive,
+          local: !!t.local, bot: !!t.bot, team: t.team || 0,
+          radius: t.stats.radius,
+        })),
+      });
+      while (this.matchBuf.length > 3000) this.matchBuf.shift();
+    }
     if (this.ended) return;
     this.replayAcc += dt;
     if (this.replayAcc < 0.05) return;
@@ -2364,7 +3074,7 @@ export class Arena {
     // damage vignette
     if (this.me && this.me.alive) {
       const hurt = 1 - clamp(this.me.hp / this.me.maxHp, 0, 1);
-      if (hurt > 0.55) {
+      if (hurt > 0.55 && !this.settings.reduceFlash) {
         ctx.fillStyle = `rgba(150,20,10,${(hurt - 0.55) * 0.5})`;
         ctx.fillRect(0, 0, vw, vh);
       }
@@ -2401,7 +3111,9 @@ export class Arena {
     }
     for (const t of this.tanks) {
       if (!t.alive) continue;
-      c.fillStyle = t.local ? '#e8f5d8' : t.remote ? '#7fd4ff' : (t.bot ? '#d98c7a' : '#9fbf8f');
+      c.fillStyle = t.local ? '#e8f5d8'
+        : this.mode.teams ? this.teamColor(t.team)
+        : t.remote ? '#7fd4ff' : (t.bot ? '#d98c7a' : '#9fbf8f');
       const r = t.local ? 3.4 * dpr : 2.4 * dpr;
       c.beginPath();
       c.arc(t.x * scale, t.y * scale, r, 0, Math.PI * 2);
@@ -2419,6 +3131,7 @@ export class Arena {
   leave() {
     if (this._leaving) return;
     this._leaving = true;
+    this.saveTheater();
     const data = this.report();
     this.stop();
     this.onReport?.(data);
