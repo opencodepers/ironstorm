@@ -12,13 +12,26 @@
 <link rel="apple-touch-icon" href="assets/ui/icon-192.png" />
 <title>IronStorm — Online Tank Warfare</title>
 <meta name="description" content="IronStorm is a free multiplayer tank arena. Pick a callsign, upgrade your hull, and fight alongside commanders worldwide." />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="IronStorm" />
+<meta property="og:title" content="IronStorm — Online Tank Warfare" />
+<meta property="og:description" content="Free multiplayer tank combat in your browser. Four warzones, twelve vehicles, and a live command deck." />
+<meta property="og:url" content="https://opencodepers.github.io/ironstorm/" />
+<meta property="og:image" content="https://opencodepers.github.io/ironstorm/assets/ui/og-ironstorm.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="IronStorm — Online Tank Warfare" />
+<meta name="twitter:description" content="Free multiplayer tank combat in your browser. Four warzones, twelve vehicles, and a live command deck." />
+<meta name="twitter:image" content="https://opencodepers.github.io/ironstorm/assets/ui/og-ironstorm.png" />
 <link rel="icon" href="assets/ui/favicon.svg" type="image/svg+xml" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@400;500;600;700&family=Saira+Condensed:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="styles/landing.css?v=10" />
-<link rel="stylesheet" href="styles/menu.css?v=10" />
-<link rel="stylesheet" href="styles/game.css?v=10" />
+<link rel="stylesheet" href="styles/landing.css?v=11" />
+<link rel="stylesheet" href="styles/menu.css?v=11" />
+<link rel="stylesheet" href="styles/game.css?v=11" />
+<link rel="stylesheet" href="styles/command.css?v=11" />
 </head>
 <body>
 
@@ -45,6 +58,7 @@
     </div>
     <nav class="land-links">
       <button data-jump="modes">WARZONES</button>
+      <button data-jump="ops">OPERATIONS</button>
       <button data-jump="arsenal">ARSENAL</button>
     </nav>
     <div class="land-status">
@@ -66,6 +80,7 @@
       <div class="hero-cta">
         <button id="land-deploy" class="cta cta-primary"><span class="cta-glint"></span><b>DEPLOY NOW</b><span class="cta-arrow">→</span></button>
         <button id="land-garage" class="cta cta-ghost">ENTER THE GARAGE</button>
+        <button id="land-manual" class="cta cta-manual">NEW COMMANDER?</button>
       </div>
       <ul class="hero-stats">
         <li><b>12</b><span>VEHICLES</span></li>
@@ -80,6 +95,43 @@
       <p class="mode-hint">YOUR CHOICE CARRIES INTO THE ARENA</p>
     </aside>
   </main>
+
+  <section class="land-brief" id="land-brief" aria-label="Live operations briefing">
+    <header class="land-brief-head">
+      <div><span class="brief-live-dot"></span> LIVE OPERATIONS BRIEFING</div>
+      <span id="land-brief-week">WEEK 01 · EU-CENTRAL</span>
+    </header>
+    <div class="land-brief-grid">
+      <article class="brief-card brief-live">
+        <span class="brief-kicker">01 / FIELD STATUS</span>
+        <div class="brief-live-count"><b id="land-brief-online">—</b><span>COMMANDERS ONLINE</span></div>
+        <div class="brief-live-meta"><span><i></i><b id="land-brief-rooms">0</b> OPEN ROOMS</span><span id="land-brief-room">GLOBAL ARENA READY</span></div>
+        <div class="brief-radar"><i></i><i></i><i></i><i></i><b></b></div>
+      </article>
+      <article class="brief-card brief-op">
+        <span class="brief-kicker">02 / WEEKLY OPERATION</span>
+        <h3 id="land-brief-op-name">OPERATION ASHFALL</h3>
+        <p id="land-brief-op-brief">Hold the burn line.</p>
+        <div class="brief-bar"><i id="land-brief-op-fill"></i></div>
+        <div class="brief-foot"><span id="land-brief-op-progress">0 / 3</span><b id="land-brief-op-days">7 DAYS LEFT</b></div>
+      </article>
+      <article class="brief-card brief-objective">
+        <span class="brief-kicker">03 / NEXT OBJECTIVE</span>
+        <h3 id="land-brief-next-title">NEXT REQUISITION</h3>
+        <p id="land-brief-next-sub">Deploy to advance your command.</p>
+        <div class="brief-mini-row"><span>SUPPLY CRATE</span><b id="land-brief-crate">READY</b></div>
+        <div class="brief-mini-row"><span>DAILY CONTRACT</span><b id="land-brief-contract">0 / 3</b></div>
+        <div class="brief-mini-row"><span>COALITION GOAL</span><b id="land-brief-coalition">0%</b></div>
+      </article>
+      <article class="brief-card brief-command">
+        <span class="brief-kicker">04 / COMMANDER</span>
+        <div class="brief-identity"><div class="brief-sigil" id="land-brief-sigil">IS</div><div><b id="land-brief-name">COMMANDER</b><span id="land-brief-tier">◆ BRONZE · SEASON 01</span></div></div>
+        <div class="brief-mini-row"><span>WEEKLY POINTS</span><b id="land-brief-points">0</b></div>
+        <div class="brief-mini-row"><span>NEXT UNLOCK</span><b id="land-brief-unlock">—</b></div>
+        <button class="brief-open" id="land-brief-open">OPEN FULL BRIEFING <span>→</span></button>
+      </article>
+    </div>
+  </section>
 
   <footer class="land-foot">
     <div class="ticker"><div class="ticker-track" id="land-ticker"></div></div>
@@ -251,6 +303,7 @@
         <div class="bb-kicker"><span>ACTIVE OPERATION</span><b id="menu-brief-tag">FREE-FOR-ALL</b></div>
         <div class="bb-main"><b id="menu-brief-name">DEATHMATCH</b><p id="menu-brief-text">Every commander for themselves. Most kills takes the sector.</p></div>
         <div class="bb-rule"><span>WIN CONDITION</span><b id="menu-brief-rule">FIRST TO 25 KILLS</b></div>
+        <button class="bb-intel" id="menu-brief-open" type="button"><i></i><span>LIVE BRIEFING</span><b id="menu-brief-online">0 ONLINE</b><em>OPEN →</em></button>
       </div>
 
       <div class="stage-foot"><span>M4 PLATFORM</span><i></i><span>CREW 04</span><b>READY FOR DEPLOYMENT</b></div>
@@ -308,9 +361,10 @@
     </div>
 
     <div id="hud-spectate" class="hud-spectate hidden">
-      <b>SPECTATING</b>
+      <b>LIVE FEED</b>
       <span id="hud-spectate-name">—</span>
       <i>A / D TO CYCLE</i>
+      <button id="spectate-exit" type="button">EXIT FEED</button>
     </div>
 
     <div id="hud-medals" class="hud-medals"></div>
@@ -414,6 +468,6 @@
 <div id="modal-root"></div>
 
 <script src="vendor/supabase.js"></script>
-<script type="module" src="js/app.js?v=10"></script>
+<script type="module" src="js/app.js?v=11"></script>
 </body>
 </html>

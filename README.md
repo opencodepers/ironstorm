@@ -144,7 +144,11 @@ Artwork: Kenney "Top-down Tanks Remastered" (CC0).
 - **Join by name** — typing a name joins that live room in whatever warzone it runs in, or creates it
   in the selected warzone. Rooms hold 12 commanders; local bots still fill out the arena.
 - **Directory** — occupancy is published over a presence channel (`ironstorm-directory-v1`) rather
-  than Postgres, so rooms need no schema change and empty rooms simply disappear from the browser.
+  than Postgres, so empty rooms simply disappear from the browser. Private fields are never listed.
+- **Private fields** — signed-in hosts get a bcrypt-checked passcode and an unguessable private
+  Realtime topic from `host_private_room`. Invitees must pass the server-side check in
+  `join_private_room`; the topic is authorized against room membership in `realtime.messages`.
+  Guests can still play public fields but cannot host or join private fields.
 
 ## Touch controls and the installable app
 
@@ -195,8 +199,11 @@ Artwork: Kenney "Top-down Tanks Remastered" (CC0).
   optional aim assist, and rebindable drive/dash/chat/scoreboard keys. Settings persist locally.
 
 Career, medals, salvage, cosmetics and friends are stored per commander on the device
-(`ironstorm.local.v1:<uid>`), alongside squad codes. Rooms, mutators, presence and friends' online
-status all run over Supabase Realtime and need no schema change.
+(`ironstorm.local.v1:<uid>`). Regiments and the community gallery now sync through Supabase when
+the commander is signed in; guests keep local fallbacks. Rooms, mutators and friends' online status
+run over Supabase Realtime. Apply
+`supabase/migrations/20261114000000_social_gallery_private_rooms.sql` to enable the cross-device
+tables and private-room Realtime policy.
 
 ## Training, command abilities and gamepad
 

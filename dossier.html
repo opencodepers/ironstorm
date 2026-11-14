@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#070b08" />
+<title>Commander Dossier — IronStorm</title>
+<meta name="description" content="A shareable IronStorm commander dossier: tier, vehicle, battle record and citation ribbons." />
+<meta property="og:type" content="profile" />
+<meta property="og:site_name" content="IronStorm" />
+<meta property="og:title" content="Commander Dossier — IronStorm" />
+<meta property="og:description" content="View this commander's field record, season tier and citation ribbons." />
+<meta property="og:image" content="https://opencodepers.github.io/ironstorm/assets/ui/og-ironstorm.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="assets/ui/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="styles/command.css?v=11" />
+<link rel="stylesheet" href="styles/dossier.css?v=11" />
+</head>
+<body>
+<div id="dossier-root"><div class="dossier-missing"><h1>LOADING DOSSIER</h1></div></div>
+<script type="module">
+  import { renderDossierPage } from './js/dossier.js';
+  renderDossierPage(document.querySelector('#dossier-root'));
+</script>
+</body>
+</html>

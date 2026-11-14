@@ -65,11 +65,12 @@ const TEAM_COLORS = ['#8fbf5f', '#e0956a'];
 const CB_TEAM_COLORS = ['#6ab0ff', '#ffb066'];
 
 export class Arena {
-  constructor({ onExit, onReport, mode = 'deathmatch', room = null, training = null, ranked = false } = {}) {
+  constructor({ onExit, onReport, mode = 'deathmatch', room = null, training = null, ranked = false, spectator = false } = {}) {
     this.onExit = onExit;
     this.onReport = onReport;
     this.training = training || null;
     this.ranked = !!ranked;
+    this.spectator = !!spectator;
     this.room = room || { mode, name: this.training ? 'ACADEMY' : 'ALPHA', key: this.training ? 'training' : `${mode}:alpha` };
     this.modeId = this.training ? 'practice' : mode;
     this.mode = this.training
@@ -238,12 +239,28 @@ export class Arena {
     if (isTouchDevice()) this.touch = initTouch(this);
     this.hud.academy?.classList.toggle('hidden', !this.training);
 
+    if (this.spectator) {
+      this.me.spectator = true;
+      this.me.invuln = Infinity;
+      $('#screen-game')?.classList.add('spectate-mode');
+      this.hud.spectate?.classList.remove('hidden');
+      this.hud.spectateName.textContent = 'CONNECTING…';
+      this.hud.pause?.classList.add('hidden');
+      this.introT = 0;
+      this.introScale = 1;
+      $('#hud')?.classList.remove('intro');
+    }
+
     if (this.training) {
       this.commandPoints = 3;
       this.hud.online.textContent = 'PRACTICE';
       this.hud.academy?.classList.remove('hidden');
       this.renderAcademy();
     } else {
+      if (!this.spectator) {
+        this.hud.spectate?.classList.add('hidden');
+        $('#screen-game')?.classList.remove('spectate-mode');
+      }
       this.connect();
     }
 
@@ -252,11 +269,12 @@ export class Arena {
     this.mapName = this.map.name;
     this.spectateIdx = 0;
     // The deploy cinematic holds the match clock and input until it ends.
-    this.introT = this.training || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? INTRO_DUR : 0;
-    if (this.training) { this.introT = INTRO_DUR; this.introScale = 1; $('#hud')?.classList.remove('intro'); }
-    this.introScale = this.introT >= INTRO_DUR ? 1 : 0.86;
-    $('#hud')?.classList.toggle('intro', this.introT < INTRO_DUR);
-    if (this.introT < INTRO_DUR) audio.play('reload');
+    this.introT = this.training || (!this.spectator && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) ? INTRO_DUR : 0;
+    if (this.training) { this.introT = INTRO_DUR; this.introScale = 1; }
+    if (this.spectator) { this.introT = 0; this.introScale = 1; }
+    this.introScale = this.introT >= INTRO_DUR || this.spectator ? 1 : 0.86;
+    $('#hud')?.classList.toggle('intro', this.introT < INTRO_DUR && !this.spectator);
+    if (this.introT < INTRO_DUR && !this.spectator) audio.play('reload');
     this.lastFrame = performance.now();
     this.animate(this.lastFrame);
   }
@@ -445,6 +463,12 @@ export class Arena {
 
   endMatch(won, label) {
     if (this.ended || this.training) return;
+    if (this.spectator) {
+      this.ended = true;
+      this.announce('LIVE FEED ENDED', 1400);
+      setTimeout(() => this.leave(), 1200);
+      return;
+    }
     this.ended = true;
     this.replay = this.compileReplay();
     this.saveTheater();
@@ -847,6 +871,7 @@ export class Arena {
         },
         onRoster: (m) => {
           this.hud.online.textContent = (m.size + 1) + ' ONLINE';
+          if (this.spectator) this.beginSpectate();
           for (const [uid, meta] of m) {
             if (!this.remotes.has(uid)) this.addRemote(uid, meta);
           }
@@ -987,6 +1012,11 @@ export class Arena {
       const keys = kb();
       const bound = [keys.up, keys.down, keys.left, keys.right, keys.dash, keys.chat, keys.board];
       if (bound.includes(k) || [' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
+      if (this.spectator) {
+        if (k === keys.left || k === keys.right) this.cycleSpectate(k === keys.right ? 1 : -1);
+        if (k === 'escape') this.leave();
+        return;
+      }
       if (this.me && !this.me.alive && !this.ended && (k === keys.left || k === keys.right)) {
         this.cycleSpectate(k === keys.right ? 1 : -1);
       }
@@ -1020,6 +1050,7 @@ export class Arena {
     };
     this.canvas.addEventListener('mousemove', this._onMove);
     this.canvas.addEventListener('mousedown', (e) => {
+      if (this.spectator) return;
       if (e.button === 0) { this.input.firing = true; audio.unlock(); }
     });
     window.addEventListener('mouseup', (e) => { if (e.button === 0) this.input.firing = false; });
@@ -1032,6 +1063,7 @@ export class Arena {
     $('#hud-pause-back')?.addEventListener('click', () => this.togglePause());
     $('#rotate-back')?.addEventListener('click', () => this.leave());
     $('#hud-leave')?.addEventListener('click', () => this.leave());
+    $('#spectate-exit')?.addEventListener('click', () => this.leave());
     this.hud.abilities?.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-ability]');
       if (btn) this.useAbility(btn.dataset.ability);
@@ -1331,7 +1363,7 @@ export class Arena {
   update(dt) {
     const me = this.me;
 
-    if (this.introT < INTRO_DUR) {
+    if (this.introT < INTRO_DUR && !this.spectator) {
       this.updateIntro(dt);
       return;
     }
@@ -1563,7 +1595,7 @@ export class Arena {
     }
 
     // ---- camera: lead the aim so fast flicks feel smooth (never shows the void)
-    if (me.alive) {
+    if (me.alive && !this.spectator) {
       const wm = this.screenToWorld(this.input.mx, this.input.my);
       const dx = wm.x - me.x, dy = wm.y - me.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -2305,9 +2337,9 @@ export class Arena {
 
     this.drawVignette(ctx);
     this.drawWeather(ctx);
-    if (this.me && this.me.alive && !this.paused && this.introT >= INTRO_DUR) this.drawReticle(ctx);
-    if (this.me && !this.me.alive) this.drawDeathOverlay(ctx);
-    if (this.introT < INTRO_DUR) this.drawIntro(ctx);
+    if (this.me && this.me.alive && !this.paused && this.introT >= INTRO_DUR && !this.spectator) this.drawReticle(ctx);
+    if (this.me && !this.me.alive && !this.spectator) this.drawDeathOverlay(ctx);
+    if (this.introT < INTRO_DUR && !this.spectator) this.drawIntro(ctx);
   }
 
   // ----------------------------------------------------------------
@@ -2539,6 +2571,7 @@ export class Arena {
   }
 
   drawTank(ctx, t) {
+    if (this.spectator && t.local) return;
     const body = img(t.stats.body);
     const barrel = img(t.stats.barrel);
     if (!body) return;
@@ -2698,7 +2731,7 @@ export class Arena {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const t of this.tanks) {
-      if (!t.alive) continue;
+      if (!t.alive || (this.spectator && t.local)) continue;
       const y = t.y - (t.stats.radius || 30) - 40;
       ctx.font = 'bold 12px "Courier New", monospace';
       ctx.fillStyle = t.local ? '#d8f0c0'
@@ -3133,9 +3166,12 @@ export class Arena {
   leave() {
     if (this._leaving) return;
     this._leaving = true;
-    this.saveTheater();
-    const data = this.report();
+    const wasSpectator = this.spectator;
+    if (!wasSpectator) this.saveTheater();
+    const data = wasSpectator ? null : this.report();
     this.stop();
+    $('#screen-game')?.classList.remove('spectate-mode');
+    if (wasSpectator) { this.onExit?.(); return; }
     this.onReport?.(data);
   }
 }

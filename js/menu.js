@@ -36,6 +36,15 @@ import {
 import { rankedState, rankTier, rankProgress, PLACEMENTS, RANK_TIERS } from './ranked.js';
 import { lastReplay, openTheater } from './theater.js';
 import { selectedMode, setMode } from './landing.js';
+import { briefingSnapshot, operationState, claimOperation, formatDuration } from './ops.js';
+import {
+  myRegiment, createRegiment, updateRegiment, leaveRegiment, regimentInvite,
+  regimentMembers, adoptRegiment, REGIMENT_COLORS,
+} from './regiments.js';
+import { galleryMaps, galleryPreview, publishMap, voteMap, reportMap } from './gallery.js';
+import { buildDossier, dossierUrl, openDossierModal, shareDossier } from './dossier.js';
+import { openManual, manualSeen } from './manual.js';
+import { wireInstallButtons, canInstall } from './install.js';
 import { audio } from './audio.js';
 import { img } from './assets.js';
 import { fmt, esc, $, $$, clamp, storage } from './util.js';
@@ -79,8 +88,16 @@ let leaderFilter = 'all';
 let leaderTank = 'sherman';
 let shopTab = 'vehicles';
 let serverFilter = null;
+let serverSearch = '';
+let serverPing = null;
 let serverUnsub = null;
 let friendUnsub = null;
+let mapView = 'builder';
+let remoteRoster = [];
+let rosterCode = null;
+let remoteGallery = [];
+let galleryLoaded = false;
+let galleryLoading = false;
 
 // Map Lab working state survives pane re-renders.
 let editor = { name: 'CUSTOM MAP', theme: 0, palette: 0, cells: [] };
@@ -89,7 +106,7 @@ const PANE_META = {
   upgrades: { title: 'UPGRADES', sub: 'Spend credits on permanent hull improvements' },
   garage: { title: 'GARAGE', sub: 'Select and requisition armoured vehicles' },
   shop: { title: 'SHOP', sub: 'Vehicles, camouflage patterns and daily supply drops' },
-  squad: { title: 'SQUAD', sub: 'Form up and roll into the same arena' },
+  squad: { title: 'REGIMENT & SQUAD', sub: 'A persistent regiment identity, plus your field squad code' },
   servers: { title: 'SERVERS', sub: 'Quickplay, or join a match by server name' },
   career: { title: 'CAREER', sub: 'Your record, per vehicle, and the weekly season' },
   medals: { title: 'MEDALS', sub: 'Long-term achievements paid in salvage' },
@@ -131,6 +148,8 @@ export function initMenu({ onPlay: play }) {
     const sub = $('#play-sub');
     if (sub) sub.textContent = `${m.name} · ${m.rules}`;
   });
+
+  $('#menu-brief-open')?.addEventListener('click', () => { audio.play('ui'); openBriefing(); });
 }
 
 function applyIcons() {
@@ -207,6 +226,7 @@ export function refreshMenu() {
   }
 
   renderModeStrip();
+  renderMenuBrief();
 
   const playSub = $('#play-sub');
   if (playSub) {
@@ -244,6 +264,111 @@ function renderModeStrip() {
   write('#menu-sortie-rule', m.rules);
   wrap.querySelectorAll('[data-mode]').forEach((b) =>
     b.addEventListener('click', () => { audio.play('ui'); setMode(b.dataset.mode); }));
+}
+
+export function openBriefing() {
+  const root = $('#modal-root');
+  if (!root || !state.profile) return;
+  const b = briefingSnapshot({
+    profile: state.profile,
+    local: state.local || loadLocal(),
+    lobby: net.lobby,
+    rooms: net.directory.rooms,
+  });
+  const op = b.operation;
+  const d = buildDossier(state.profile, state.local || loadLocal());
+  const contract = b.contracts;
+  const done = contract.filter((c) => c.complete).length;
+  root.innerHTML = `<div class="modal-backdrop"></div>
+    <div class="briefing-modal">
+      <header class="briefing-head">
+        <div class="briefing-title">
+          <span><i></i> COMMAND UPLINK // WEEK ${String(b.week).padStart(2, '0')}</span>
+          <h2>OPERATIONS BRIEFING</h2>
+          <p>Live field picture, this week's operation, and the next thing worth doing.</p>
+        </div>
+        <div class="briefing-head-actions">
+          <button class="overlay-back" data-brief-close type="button">← BACK</button>
+          <button class="icon-btn" data-brief-close aria-label="Close">✕</button>
+        </div>
+      </header>
+      <div class="briefing-strip">
+        <div class="brief-live-count"><b>${b.online}</b><span>COMMANDERS ONLINE</span></div>
+        <div><b>${b.openRooms}</b><span>OPEN ROOMS</span></div>
+        <div><b>${b.featured.name}</b><span>FEATURED WARZONE</span></div>
+        <div><b>${b.daysLeft}D</b><span>SEASON TIME LEFT</span></div>
+      </div>
+      <div class="briefing-body">
+        <section class="briefing-main">
+          <article class="briefing-op" style="--op:${op.accent}">
+            <div class="bo-kicker"><span>WEEKLY OPERATION</span><b>${op.tag}</b></div>
+            <h3>${op.name}</h3>
+            <p>${op.brief}</p>
+            <div class="bo-meta"><span>${MODES[op.mode]?.name || op.mode} · ${op.mutatorName}</span><b>+${op.reward} SALVAGE</b></div>
+            <div class="brief-bar"><i style="width:${Math.round(op.pct * 100)}%"></i></div>
+            <div class="bo-foot"><span>${op.progress} / ${op.target} ${op.metric.toUpperCase()}</span><button class="brief-claim" data-brief-claim ${op.claimable ? '' : 'disabled'}>${op.claimed ? 'CLAIMED' : op.claimable ? 'CLAIM REWARD' : 'IN PROGRESS'}</button></div>
+          </article>
+          <article class="briefing-block">
+            <header><span>LIVE FIELD</span><b>${b.activeRoom ? `${b.activeRoom.meta?.roomName || 'ALPHA'} · ${b.activeRoom.players} IN FIELD` : 'GLOBAL ARENA READY'}</b></header>
+            <div class="live-room-list">${(net.directory.rooms || []).slice(0, 4).map((r) => `<div><i></i><b>${esc(r.roomName || 'ALPHA')}</b><span>${MODES[r.mode]?.name || 'ARENA'}</span><em>${r.level ? 'LVL ' + r.level : 'LIVE'}</em></div>`).join('') || '<p class="career-empty">No live rooms in the directory yet. ENTER THE ARENA to open one.</p>'}</div>
+          </article>
+          <article class="briefing-block coalition">
+            <header><span>COALITION GOAL</span><b>${b.coalition.points} / ${b.coalition.target} POINTS</b></header>
+            <p>Every commander online contributes weekly points. Keep the uplink hot and the coalition crosses the line together.</p>
+            <div class="brief-bar"><i style="width:${Math.round(b.coalition.pct * 100)}%"></i></div>
+          </article>
+        </section>
+        <aside class="briefing-side">
+          <article class="briefing-block">
+            <header><span>NEXT OBJECTIVE</span><b>${b.season.tier.name}</b></header>
+            <div class="brief-next-row"><b>${b.next ? b.next.name : 'ALL REQUISITIONS COMPLETE'}</b><span>${b.next ? `${b.next.kind} · ${fmt(b.next.need)} XP TO UNLOCK` : 'Every hull and camouflage is on your roster.'}</span></div>
+            <div class="brief-mini-row"><span>SUPPLY CRATE</span><b>${b.crate.ready ? 'READY TO OPEN' : formatDuration(b.crate.msLeft)}</b></div>
+            <div class="brief-mini-row"><span>CONTRACTS</span><b>${done} / ${contract.length} COMPLETE</b></div>
+            <button class="brief-link" data-brief-pane="shop">OPEN SUPPLY & CONTRACTS →</button>
+          </article>
+          <article class="briefing-block">
+            <header><span>COMMANDER</span><b>${esc(state.profile.username)}</b></header>
+            <div class="brief-identity">
+              <div class="brief-sigil" style="color:${b.tier.color}">${esc(state.profile.username.slice(0, 2).toUpperCase())}</div>
+              <div><b>${b.tier.name} · LEVEL ${state.profile.level}</b><span>${b.season.tier.name} SEASON TIER · ${fmt(weekPoints(state.local?.weekly || {}))} WEEKLY POINTS</span></div>
+            </div>
+            <button class="brief-link" data-brief-dossier>VIEW / SHARE DOSSIER →</button>
+          </article>
+          <article class="briefing-block">
+            <header><span>FIELD MANUAL</span><b>${manualSeen() ? 'BRIEFED' : 'NEW COMMANDER'}</b></header>
+            <p>Drive, fire, dash and take the objective. Three drills, then the range.</p>
+            <button class="brief-link" data-brief-academy>${manualSeen() ? 'OPEN ACADEMY →' : 'OPEN FIELD MANUAL →'}</button>
+          </article>
+        </aside>
+      </div>
+      <footer class="briefing-foot"><span>LIVE DATA PULLED FROM COMMAND PRESENCE · UPDATED ON OPEN</span><b>IRON CORPS // AUTHORIZED</b></footer>
+    </div>`;
+  const close = () => { root.innerHTML = ''; };
+  root.querySelectorAll('[data-brief-close]').forEach((n) => n.addEventListener('click', close));
+  root.querySelector('.modal-backdrop')?.addEventListener('click', close);
+  root.querySelector('[data-brief-claim]')?.addEventListener('click', (e) => {
+    const res = claimOperation(state.local || loadLocal());
+    if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
+    saveLocal();
+    audio.play('buy');
+    refreshMenu();
+    toast(`Operation reward: +${fmt(res.reward)} salvage`, 'good');
+    openBriefing();
+  });
+  root.querySelector('[data-brief-dossier]')?.addEventListener('click', () => openDossierModal(d));
+  root.querySelector('[data-brief-pane]')?.addEventListener('click', () => { close(); openPane('shop'); });
+  root.querySelector('[data-brief-academy]')?.addEventListener('click', () => {
+    close();
+    if (manualSeen()) document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'academy' } }));
+    else openManual({ onAcademy: () => document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'academy' } })) });
+  });
+}
+
+function renderMenuBrief() {
+  if (!state.profile) return;
+  const b = briefingSnapshot({ profile: state.profile, local: state.local, lobby: net.lobby, rooms: net.directory.rooms });
+  const online = $('#menu-brief-online');
+  if (online) online.textContent = `${b.online} ONLINE · OP ${b.operation.progress}/${b.operation.target}`;
 }
 
 let creditShown = null;
@@ -507,6 +632,7 @@ function wirePane() {
   if (currentPane === 'career') {
     loadCareerExtras();
     $('#dogtag-open')?.addEventListener('click', openDogTag);
+    $('#career-dossier')?.addEventListener('click', () => openDossierModal(buildDossier(state.profile, state.local || loadLocal())));
   }
   if (currentPane === 'academy') {
     $('#academy-launch')?.addEventListener('click', () => {
@@ -529,6 +655,10 @@ function wirePane() {
   }
   if (currentPane === 'theater') {
     $('#theater-watch')?.addEventListener('click', () => { closePane(); openTheater(); });
+    root.querySelectorAll('[data-watch-room]').forEach((b) => b.addEventListener('click', () => {
+      closePane();
+      document.dispatchEvent(new CustomEvent('ironstorm:spectate', { detail: { name: b.dataset.watchRoom, mode: b.dataset.watchMode } }));
+    }));
   }
   if (currentPane === 'friends') {
     friendUnsub = net.watchLobby(() => paintFriendList());
@@ -580,6 +710,7 @@ function wirePane() {
     });
   }
   if (currentPane === 'squad') {
+    wireRegiment();
     const code = ensureSquad();
     $('#squad-copy')?.addEventListener('click', async () => {
       const link = `${location.origin}${location.pathname}?squad=${code}`;
@@ -623,8 +754,13 @@ function wirePane() {
       audio.play('ui');
       rerenderPaneBody();
     }));
+    $('#srv-search')?.addEventListener('input', (e) => {
+      serverSearch = e.target.value || '';
+      paintServerList();
+    });
     $('#srv-refresh')?.addEventListener('click', () => {
       audio.play('ui');
+      if (net.ping) net.ping().then((ms) => { serverPing = ms; paintServerPing(); });
       paintServerList();
       toast('Server list refreshed', 'info');
     });
@@ -644,12 +780,25 @@ function wirePane() {
         return;
       }
       const live = findRoomByName(net.directory.rooms, name);
-      joinServer(live?.mode || serverFilter || selectedMode().id, name);
+      joinServer(live?.mode || serverFilter || selectedMode().id, name, null, $('#srv-pass')?.value || '');
     };
     $('#srv-join-btn')?.addEventListener('click', joinByName);
     $('#srv-name')?.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') joinByName();
+    });
+    $('#srv-host')?.addEventListener('click', () => {
+      const name = roomDisplayName($('#srv-host-name')?.value);
+      const passcode = String($('#srv-host-pass')?.value || '').trim();
+      if (!name) { audio.play('deny'); toast('Name the private field first', 'bad'); return; }
+      if (!passcode) { audio.play('deny'); toast('Set a passcode for the field', 'bad'); return; }
+      if (state.mode !== 'account') { audio.play('deny'); toast('Sign in to host a private field', 'bad'); return; }
+      const mode = serverFilter || selectedMode().id;
+      audio.play('ui');
+      document.dispatchEvent(new CustomEvent('ironstorm:join', {
+        detail: { ...makeRoom(mode, name, { private: true, passcode }), host: true },
+      }));
+      closePane();
     });
   }
 }
@@ -1119,6 +1268,7 @@ function renderCareer() {
       </div>
       <div class="cb-salvage">${ICONS.crate}<div><b>${fmt(l.salvage)}</b><span>SALVAGE</span></div></div>
       <button id="dogtag-open" class="cb-dogtag">SHARE DOG TAG</button>
+      <button id="career-dossier" class="cb-dossier">VIEW DOSSIER</button>
     </div>
     <div class="career-grid">
       ${stat('KILLS', fmt(p.kills))}
@@ -1301,7 +1451,7 @@ function renderSquad() {
   const code = ensureSquad();
   const mates = squadmates();
   const link = `${location.origin}${location.pathname}?squad=${code}`;
-  return `<div class="squad-hero">
+  return `${renderRegimentSection()}<div class="squad-hero">
       <div class="squad-code">
         <span>SQUAD CODE</span>
         <b id="squad-code">${code}</b>
@@ -1330,6 +1480,125 @@ function renderSquad() {
     </div>`;
 }
 
+function renderRegimentSection() {
+  const reg = state.regiment || myRegiment(state.uid);
+  if (!reg) {
+    return `<section class="regiment-panel regiment-new">
+      <div class="regiment-mark"><span>REG</span><i>00</i></div>
+      <div class="regiment-main">
+        <span class="reg-kicker">PERSISTENT IDENTITY</span>
+        <h3>RAISE YOUR REGIMENT</h3>
+        <p>Carry a tag into every battle. Your roster is every commander currently flying the same code.</p>
+        <div class="reg-form">
+          <label class="field"><span>REGIMENT NAME</span><input id="reg-name" maxlength="24" placeholder="IRON WOLVES" /></label>
+          <label class="field reg-tag-field"><span>TAG</span><input id="reg-tag" maxlength="5" placeholder="IW" /></label>
+          <label class="field"><span>COLOUR</span><select id="reg-color">${REGIMENT_COLORS.map((c, i) => `<option value="${c}" ${i === 0 ? 'selected' : ''}>${['GREEN', 'BLUE', 'GOLD', 'VIOLET', 'EMBER', 'TEAL'][i] || `COLOUR ${i + 1}`}</option>`).join('')}</select></label>
+          <button class="btn" id="reg-create">FOUND REGIMENT</button>
+        </div>
+      </div>
+    </section>`;
+  }
+  const members = regimentMembers(net.lobby, reg, state.profile, remoteRoster);
+  return `<section class="regiment-panel" style="--reg:${reg.color}">
+    <div class="regiment-mark"><span>${esc(reg.tag)}</span><i>${String(members.length).padStart(2, '0')}</i></div>
+    <div class="regiment-main">
+      <span class="reg-kicker">REGIMENT DOSSIER // ${esc(reg.code)}</span>
+      <h3>${esc(reg.name)}</h3>
+      <p>${esc(reg.motto || 'HOLD THE LINE')} · Founded by ${esc(reg.owner || 'FIELD COMMAND')}</p>
+      <div class="reg-meta"><span><b>${members.filter((m) => m.online).length}</b> ONLINE</span><span><b>${reg.tag}</b> REGIMENT TAG</span><span><b>${members.length}</b> ON ROSTER</span></div>
+      <div class="reg-actions">
+        <button class="btn" id="reg-invite">COPY ENLISTMENT LINK</button>
+        <button class="btn btn-ghost" id="reg-edit">EDIT DOSSIER</button>
+        <button class="btn btn-ghost" id="reg-leave">LEAVE</button>
+      </div>
+    </div>
+    <div class="reg-roster">
+      <span>REGIMENT ROSTER</span>
+      <div>${members.length ? members.map((m) => `<div class="reg-member ${m.online ? 'on' : ''}"><i></i><b>${esc(m.name)}</b><span>LVL ${m.level || 1}${m.you ? ' · YOU' : ''}${m.room ? ' · ' + esc(m.room) : ''}</span><em>${fmt(m.wp || 0)} PTS</em></div>`).join('') : '<p class="career-empty">No one else is carrying this tag right now. Share the enlistment link to muster.</p>'}</div>
+    </div>
+    <div class="reg-edit-panel hidden" id="reg-edit-panel">
+      <label class="field"><span>NAME</span><input id="reg-name" maxlength="24" value="${esc(reg.name)}" /></label>
+      <label class="field reg-tag-field"><span>TAG</span><input id="reg-tag" maxlength="5" value="${esc(reg.tag)}" /></label>
+      <label class="field"><span>MOTTO</span><input id="reg-motto" maxlength="40" value="${esc(reg.motto || '')}" /></label>
+      <label class="field"><span>COLOUR</span><select id="reg-color">${REGIMENT_COLORS.map((c, i) => `<option value="${c}" ${reg.color === c ? 'selected' : ''}>${['GREEN', 'BLUE', 'GOLD', 'VIOLET', 'EMBER', 'TEAL'][i] || `COLOUR ${i + 1}`}</option>`).join('')}</select></label>
+      <button class="btn" id="reg-save">SAVE DOSSIER</button>
+    </div>
+  </section>`;
+}
+
+function wireRegiment() {
+  const root = $('#pane-root');
+  const publish = (reg) => {
+    state.regiment = reg;
+    document.dispatchEvent(new CustomEvent('ironstorm:regiment', { detail: reg }));
+    refreshMenu();
+    rerenderPaneBody();
+  };
+  $('#reg-create')?.addEventListener('click', async () => {
+    const values = {
+      name: $('#reg-name')?.value,
+      tag: $('#reg-tag')?.value,
+      color: $('#reg-color')?.value,
+    };
+    let res;
+    if (state.mode === 'account') {
+      res = await net.createRegimentRemote(values);
+      if (res.ok) res.regiment = adoptRegiment(res.regiment, state.uid);
+      if (!res.ok) res.why = res.error;
+    } else {
+      res = createRegiment(values, state.uid, state.profile.username);
+    }
+    if (!res.ok) { audio.play('deny'); toast(res.why || res.error, 'bad'); return; }
+    audio.play('levelup');
+    rosterCode = null; remoteRoster = [];
+    toast(`${res.regiment.tag} ${res.regiment.name} founded`, 'good');
+    publish(res.regiment);
+  });
+  $('#reg-save')?.addEventListener('click', async () => {
+    const values = {
+      name: $('#reg-name')?.value, tag: $('#reg-tag')?.value,
+      motto: $('#reg-motto')?.value, color: $('#reg-color')?.value,
+      code: state.regiment?.code,
+    };
+    let res;
+    if (state.mode === 'account') {
+      res = await net.updateRegimentRemote(values);
+      if (res.ok) res.regiment = adoptRegiment(res.regiment, state.uid);
+      if (!res.ok) res.why = res.error;
+    } else {
+      res = updateRegiment(values, state.uid);
+    }
+    if (!res.ok) { audio.play('deny'); toast(res.why || res.error, 'bad'); return; }
+    audio.play('buy'); toast('Regiment dossier updated', 'good'); publish(res.regiment);
+  });
+  $('#reg-edit')?.addEventListener('click', () => $('#reg-edit-panel')?.classList.toggle('hidden'));
+  $('#reg-invite')?.addEventListener('click', async () => {
+    const reg = myRegiment(state.uid);
+    const link = regimentInvite(reg);
+    try { await navigator.clipboard.writeText(link); audio.play('buy'); toast('Enlistment link copied', 'good'); }
+    catch { toast(link, 'info'); }
+  });
+  $('#reg-leave')?.addEventListener('click', async () => {
+    if (state.mode === 'account') await net.leaveRegimentRemote();
+    leaveRegiment(state.uid);
+    state.regiment = null;
+    rosterCode = null; remoteRoster = [];
+    document.dispatchEvent(new CustomEvent('ironstorm:regiment', { detail: null }));
+    audio.play('uiBack'); toast('Regiment left', 'info'); refreshMenu(); rerenderPaneBody();
+  });
+  loadRegimentRoster(state.regiment || myRegiment(state.uid));
+}
+
+async function loadRegimentRoster(reg) {
+  if (!reg?.code || state.mode !== 'account' || rosterCode === reg.code) return;
+  rosterCode = reg.code;
+  const res = await net.fetchRegimentRoster(reg.code);
+  if (res.ok && rosterCode === reg.code) {
+    remoteRoster = res.rows;
+    if (currentPane === 'squad') rerenderPaneBody();
+  }
+}
+
 // ---- servers -----------------------------------------------------
 function stopWatchingServers() {
   if (serverUnsub) {
@@ -1347,35 +1616,58 @@ function stopWatchingFriends() {
 
 function renderServers() {
   const mode = serverFilter || selectedMode().id;
+  if (serverPing == null && net.ping) net.ping().then((ms) => { serverPing = ms; paintServerPing(); });
   return `<div class="srv-head">
       <div class="srv-tabs">${MODE_ORDER.map((id) =>
         `<button class="srv-tab ${id === mode ? 'on' : ''}" data-srv-mode="${id}">${MODES[id].name}</button>`).join('')}</div>
       <button class="srv-refresh" id="srv-refresh">REFRESH</button>
     </div>
+    <div class="srv-tools">
+      <label class="srv-search"><i>⌕</i><input id="srv-search" maxlength="16" placeholder="SEARCH SERVERS" value="${esc(serverSearch)}" autocomplete="off" spellcheck="false" /></label>
+      <span class="srv-ping"><i></i> EU-CENTRAL <b id="srv-ping">${serverPing == null ? 'MEASURING' : serverPing + ' MS'}</b></span>
+    </div>
     <div class="srv-list" id="srv-list">${serverRowsHtml(mode)}</div>
     <div class="srv-join">
-      <label class="field"><span>JOIN BY SERVER NAME</span>
+      <label class="field"><span>JOIN OR HOST BY SERVER NAME</span>
         <input id="srv-name" maxlength="16" placeholder="MY SERVER" autocomplete="off" spellcheck="false" />
+      </label>
+      <label class="field srv-pass-field"><span>PASSCODE</span>
+        <input id="srv-pass" maxlength="12" placeholder="OPTIONAL" autocomplete="off" spellcheck="false" />
       </label>
       <button class="btn" id="srv-join-btn">JOIN</button>
     </div>
+    <div class="srv-host">
+      <div><span>HOST A PRIVATE FIELD</span><p>${state.mode === 'account' ? 'Server-checked passcode, hidden from the directory. Share the invite link after hosting.' : 'Sign in to host a server-checked private field.'}</p></div>
+      <label class="field"><span>ROOM NAME</span><input id="srv-host-name" maxlength="16" placeholder="NIGHT RAID" autocomplete="off" spellcheck="false" /></label>
+      <label class="field srv-pass-field"><span>PASSCODE</span><input id="srv-host-pass" maxlength="12" placeholder="SECTOR CODE" autocomplete="off" spellcheck="false" /></label>
+      <button class="btn btn-ghost" id="srv-host">HOST PRIVATE</button>
+    </div>
     <button class="btn srv-quick" id="srv-quick">QUICKPLAY · ${MODES[mode].name}</button>
-    <p class="pane-note">Quickplay drops you into the busiest ${MODES[mode].name} server with a free slot. Server names are shared by everyone — tell a friend the name and you land in the same match.</p>`;
+    <p class="pane-note">Quickplay drops you into the busiest ${MODES[mode].name} server with a free slot. Private rooms are hidden from the directory; join by name and passcode or use the invite link.</p>`;
 }
 
 function serverRowsHtml(mode) {
-  return roomRows(mode, net.directory.rooms).map((r) => {
-    const full = r.players >= ROOM_CAPACITY;
-    const pct = clamp((r.players / ROOM_CAPACITY) * 100, 2, 100);
-    return `<article class="srv-row ${full ? 'full' : ''}">
-      <div class="srv-id">
-        <b>${esc(r.name)}</b>
-        <span>${MODES[mode].name} · ${r.players}/${ROOM_CAPACITY}${r.players === 0 ? ' · EMPTY' : ''}${r.rules && r.rules.mutator !== 'standard' ? ' · ' + MUTATORS[r.rules.mutator].name : ''}</span>
-      </div>
-      <div class="srv-occ"><i style="width:${pct}%"></i></div>
-      <button class="sc-buy ${full ? 'locked' : ''}" data-join-mode="${r.mode}" data-join-name="${esc(r.name)}" ${full ? 'disabled' : ''}>${full ? 'FULL' : 'JOIN'}</button>
-    </article>`;
-  }).join('');
+  const query = serverSearch.trim().toLowerCase();
+  return roomRows(mode, net.directory.rooms)
+    .filter((r) => !query || r.name.toLowerCase().includes(query))
+    .map((r) => {
+      const full = r.players >= ROOM_CAPACITY;
+      const pct = clamp((r.players / ROOM_CAPACITY) * 100, 2, 100);
+      const privateRoom = !!r.rules?.private;
+      return `<article class="srv-row ${full ? 'full' : ''} ${privateRoom ? 'private' : ''}">
+        <div class="srv-id">
+          <b>${privateRoom ? '⌑ ' : ''}${esc(r.name)}</b>
+          <span>${MODES[mode].name} · ${r.players}/${ROOM_CAPACITY}${r.players === 0 ? ' · EMPTY' : ''}${r.rules && r.rules.mutator !== 'standard' ? ' · ' + MUTATORS[r.rules.mutator].name : ''}${privateRoom ? ' · PRIVATE FIELD' : ''}</span>
+        </div>
+        <div class="srv-occ"><i style="width:${pct}%"></i></div>
+        <button class="sc-buy ${full ? 'locked' : ''} ${privateRoom ? 'private' : ''}" data-join-mode="${r.mode}" data-join-name="${esc(r.name)}" ${full ? 'disabled' : ''}>${full ? 'FULL' : privateRoom ? 'CODE' : 'JOIN'}</button>
+      </article>`;
+    }).join('') || '<div class="srv-empty">NO SERVERS MATCH THAT SEARCH</div>';
+}
+
+function paintServerPing() {
+  const el = $('#srv-ping');
+  if (el) el.textContent = serverPing == null ? 'MEASURING' : serverPing + ' MS';
 }
 
 function paintServerList() {
@@ -1391,12 +1683,12 @@ function wireServerRows() {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.joinMode;
       const row = roomRows(mode, net.directory.rooms).find((r) => r.name === btn.dataset.joinName);
-      joinServer(mode, btn.dataset.joinName, row?.players || 0);
+      joinServer(mode, btn.dataset.joinName, row?.players || 0, $('#srv-pass')?.value || '');
     });
   });
 }
 
-function joinServer(mode, name, players = null) {
+function joinServer(mode, name, players = null, passcode = '') {
   const row = roomRows(mode, net.directory.rooms).find((r) => r.name === roomDisplayName(name));
   const count = players ?? row?.players ?? 0;
   if (count >= ROOM_CAPACITY) {
@@ -1404,8 +1696,17 @@ function joinServer(mode, name, players = null) {
     toast('That server is full', 'bad');
     return;
   }
+  const rules = row?.rules ? { ...row.rules } : null;
+  const isPrivate = !!rules?.private || !!passcode;
+  if (isPrivate && !passcode) {
+    audio.play('deny');
+    toast('That private field needs its passcode', 'bad');
+    return;
+  }
   audio.play('ui');
-  document.dispatchEvent(new CustomEvent('ironstorm:join', { detail: makeRoom(mode, name) }));
+  document.dispatchEvent(new CustomEvent('ironstorm:join', {
+    detail: makeRoom(mode, name, isPrivate ? { ...(rules || {}), private: true, passcode } : rules),
+  }));
   closePane();
 }
 
@@ -1645,7 +1946,7 @@ async function loadLeaderboard() {
       return `
       <div class="lb-row ${r.username === me ? 'lb-me' : ''}">
         <span class="lb-rank">${i < 3 ? ['①', '②', '③'][i] : i + 1}</span>
-        <span class="lb-name"><i class="lb-tier" style="color:${tier.color}" title="${tier.name}">${tierGlyph(tier.id)}</i>${esc(r.username)}</span>
+        <a class="lb-name lb-link" href="${dossierUrl({ n: r.username, lv: r.level, k: r.kills, d: r.deaths, m: r.matches, w: r.wins, tp: lifetimePoints(r), tier: tier.id, tn: tier.name, tn2: tier.name, kd: r.kd, fav: 'M4 SHERMAN', md: [], sp: 0, sv: 0, ac: 0, st: 0, op: 0, bs: r.best_score })}" target="_blank" rel="noopener"><i class="lb-tier" style="color:${tier.color}" title="${tier.name}">${tierGlyph(tier.id)}</i>${esc(r.username)}</a>
         <span>${fmt(r.kills)}</span><span>${fmt(r.wins)}</span><span>${r.level}</span>
         <span>${fmt(r.best_score)}</span><span>${Number(r.kd || 0).toFixed(2)}</span>
       </div>`;
@@ -1676,12 +1977,51 @@ function renderAcademyPane() {
 }
 
 // ---- map lab -----------------------------------------------------
+const allGallery = () => galleryMaps(state.uid, remoteGallery);
+
+function mapTabs() {
+  return `<div class="map-tabs"><button class="map-tab ${mapView === 'builder' ? 'on' : ''}" data-map-view="builder">BUILDER</button><button class="map-tab ${mapView === 'gallery' ? 'on' : ''}" data-map-view="gallery">COMMUNITY GALLERY</button><span>${allGallery().length} FIELDS ARCHIVED</span></div>`;
+}
+
+async function loadCommunityGallery(force = false) {
+  if (state.mode !== 'account') { remoteGallery = []; return; }
+  if (galleryLoading || (galleryLoaded && !force)) return;
+  galleryLoading = true;
+  const res = await net.fetchGalleryMaps();
+  if (res.ok) {
+    remoteGallery = res.rows.map((row) => ({
+      ...row,
+      author: row.author_name || 'COMMANDER',
+      remote: true,
+      at: row.created_at ? Date.parse(row.created_at) : 0,
+    }));
+  }
+  galleryLoaded = true;
+  galleryLoading = false;
+  if (currentPane === 'maps' && mapView === 'gallery') rerenderPaneBody();
+}
+
+function renderGallery() {
+  const maps = allGallery();
+  return `<div class="map-gallery">
+    <div class="mg-head"><div><span>FIELD ARCHIVE // COMMUNITY</span><h3>BATTLEFIELDS WORTH DEPLOYING INTO</h3></div><button class="btn btn-ghost" data-map-view="builder">BUILD A FIELD</button></div>
+    <div class="mg-feature">${galleryPreview(maps[0]?.code || '')}<div><span>MAP OF THE WEEK</span><h4>${esc(maps[0]?.name || 'CUSTOM FIELD')}</h4><p>${esc(maps[0]?.author || 'IRON CORPS')} · ${THEMES[maps[0]?.theme || 0]?.name || 'ASHFORD'}</p><b>▲ ${maps[0]?.votes || 0}</b></div></div>
+    <div class="mg-grid">${maps.slice(1).map((m) => `<article class="mg-card">
+      <div class="mg-preview">${galleryPreview(m.code)}<span>${esc(THEMES[m.theme]?.name || 'ASHFORD')}</span></div>
+      <div class="mg-copy"><b>${esc(m.name)}</b><span>${esc(m.author || 'COMMANDER')} · ${m.cells.length} PROPS</span></div>
+      <div class="mg-actions"><button class="sc-buy" data-map-play="${esc(m.code)}">PLAY</button><button class="sc-buy" data-map-load="${esc(m.code)}">LOAD</button><button class="sc-buy" data-gallery-vote="${esc(m.id)}" ${m.seed || m.voted ? 'disabled' : ''}>▲ ${m.votes || 0}</button><button class="sc-buy" data-gallery-report="${esc(m.id)}" title="Report a broken layout">⚑</button></div>
+    </article>`).join('')}</div>
+    <p class="pane-note">Every field is a self-contained map code. Signed-in commanders browse and publish to the global archive; guest fields stay on this device. Three reports hides a broken layout.</p>
+  </div>`;
+}
+
 function renderMapLab() {
+  if (mapView === 'gallery') return `${mapTabs()}${renderGallery()}`;
   const code = mapCode(editor.name, editor.theme, editor.cells);
   editor.code = code;
   const grid = new Map(editor.cells.map((c) => [`${c.x},${c.y}`, c]));
   const saved = listCustom(state.uid);
-  return `<div class="maplab">
+  return `${mapTabs()}<div class="maplab">
     <div class="ml-main">
       <div class="ml-board">
         <div class="ml-grid">${Array.from({ length: GRID * GRID }, (_, i) => {
@@ -1705,6 +2045,7 @@ function renderMapLab() {
         <div class="ml-actions">
           <button class="sc-buy" id="ml-copy">COPY CODE</button>
           <button class="sc-buy" id="ml-save">SAVE</button>
+          <button class="sc-buy" id="ml-publish">PUBLISH</button>
           <button class="sc-buy" id="ml-random">RANDOM</button>
           <button class="sc-buy" id="ml-clear">CLEAR</button>
         </div>
@@ -1729,6 +2070,46 @@ function renderMapLab() {
 
 function wireMapLab() {
   const root = $('#pane-root');
+  root.querySelectorAll('[data-map-view]').forEach((b) => b.addEventListener('click', () => {
+    mapView = b.dataset.mapView;
+    audio.play('ui');
+    rerenderPaneBody();
+  }));
+  root.querySelectorAll('[data-gallery-vote]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.galleryVote;
+    const map = allGallery().find((m) => m.id === id);
+    if (map?.remote) {
+      if (state.mode !== 'account') { audio.play('deny'); toast('Sign in to vote in the global gallery', 'bad'); return; }
+      const res = await net.voteGalleryMap(id);
+      if (!res.ok) { audio.play('deny'); toast(res.error, 'bad'); return; }
+      const row = remoteGallery.find((m) => m.id === id);
+      if (row) { row.votes = res.votes; row.voted = true; }
+      audio.play('buy'); toast(`Field upvoted · ${res.votes} votes`, 'good');
+      rerenderPaneBody(); return;
+    }
+    const res = voteMap(state.uid, id);
+    if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
+    audio.play('buy');
+    toast(`Field upvoted · ${res.votes} votes`, 'good');
+    rerenderPaneBody();
+  }));
+  root.querySelectorAll('[data-gallery-report]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.galleryReport;
+    const map = allGallery().find((m) => m.id === id);
+    if (map?.remote) {
+      if (state.mode !== 'account') { audio.play('deny'); toast('Sign in to report a global field', 'bad'); return; }
+      const res = await net.reportGalleryMap(id);
+      if (!res.ok) { audio.play('deny'); toast(res.error, 'bad'); return; }
+      remoteGallery = remoteGallery.filter((m) => m.id !== id);
+      audio.play('ui'); toast('Layout reported for moderation', 'info');
+      rerenderPaneBody(); return;
+    }
+    const res = reportMap(state.uid, id);
+    if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
+    audio.play('ui');
+    toast('Layout reported — removed from your archive', 'info');
+    rerenderPaneBody();
+  }));
   const redraw = () => {
     editor.code = mapCode(editor.name, editor.theme, editor.cells);
     const field = $('#ml-code');
@@ -1766,6 +2147,30 @@ function wireMapLab() {
     if (!res.ok) { audio.play('deny'); toast(res.why, 'bad'); return; }
     audio.play('buy'); toast('Battlefield saved', 'good'); rerenderPaneBody();
   });
+  $('#ml-publish')?.addEventListener('click', async () => {
+    const code = mapCode(editor.name, editor.theme, editor.cells);
+    if (state.mode === 'account') {
+      const remote = await net.publishGalleryMap({ code, name: editor.name });
+      if (remote.ok) {
+        remoteGallery.unshift({ ...remote.row, author: state.profile.username, remote: true });
+        galleryLoaded = true;
+        audio.play('levelup');
+        toast('Field published to the global gallery', 'good');
+        mapView = 'gallery';
+        rerenderPaneBody();
+        return;
+      }
+      audio.play('deny');
+      toast(remote.error, 'bad');
+      return;
+    }
+    const local = publishMap(state.uid, code, state.profile.username);
+    if (!local.ok) { audio.play('deny'); toast(local.why, 'bad'); return; }
+    audio.play('levelup');
+    toast('Field published to your local archive — sign in to share globally', 'good');
+    mapView = 'gallery';
+    rerenderPaneBody();
+  });
   $('#ml-random')?.addEventListener('click', () => {
     const used = new Set();
     editor.cells = [];
@@ -1788,6 +2193,7 @@ function wireMapLab() {
     const data = decodeMap(btn.dataset.mapLoad);
     if (!data) return;
     editor = { name: data.name, theme: data.theme, palette: editor.palette, cells: data.cells };
+    mapView = 'builder';
     rerenderPaneBody();
   }));
   root.querySelectorAll('[data-map-play]').forEach((btn) => btn.addEventListener('click', () => {
@@ -1798,6 +2204,7 @@ function wireMapLab() {
     removeCustom(state.uid, btn.dataset.mapDelete);
     audio.play('uiBack'); rerenderPaneBody();
   }));
+  if (mapView === 'gallery') loadCommunityGallery();
 }
 
 // ---- ranked ------------------------------------------------------
@@ -1835,15 +2242,24 @@ function renderTheater() {
   const replay = lastReplay();
   const frames = replay?.frames || [];
   const span = frames.length ? Math.max(0, frames[frames.length - 1].t - frames[0].t) : 0;
-  return `<div class="theater-pane">
-    ${frames.length ? `<div class="theater-card">
-      <span class="tc-kicker">LAST BATTLE</span>
-      <h3>${esc(replay.map || 'FIELD RECORDING')}</h3>
-      <div class="tc-meta"><span>${Math.floor(span / 60)}:${String(Math.floor(span % 60)).padStart(2, '0')} · ${frames.length} FRAMES</span>
-      <span>${replay.obstacles?.length || 0} PROPS</span></div>
-      <button class="btn" id="theater-watch">OPEN THEATER</button>
-      <p class="set-note">Drag to pan, wheel to zoom, WASD to fly. The replay lasts for this browser session.</p>
-    </div>` : `<div class="theater-card empty"><h3>NO REPLAY YET</h3><p>Finish any battle — including a training run — and the theater will hold the recording.</p></div>`}
+  const live = (net.directory.rooms || []).slice(0, 4);
+  return `<div class="theater-pane theater-layout">
+    <div class="theater-main">
+      ${frames.length ? `<div class="theater-card">
+        <span class="tc-kicker">LAST BATTLE</span>
+        <h3>${esc(replay.map || 'FIELD RECORDING')}</h3>
+        <div class="tc-meta"><span>${Math.floor(span / 60)}:${String(Math.floor(span % 60)).padStart(2, '0')} · ${frames.length} FRAMES</span>
+        <span>${replay.obstacles?.length || 0} PROPS</span></div>
+        <button class="btn" id="theater-watch">OPEN THEATER</button>
+        <p class="set-note">Drag to pan, wheel to zoom, WASD to fly. The replay lasts for this browser session.</p>
+      </div>` : `<div class="theater-card empty"><h3>NO REPLAY YET</h3><p>Finish any battle — including a training run — and the theater will hold the recording.</p></div>`}
+    </div>
+    <aside class="live-feed-panel">
+      <div class="live-feed-head"><span><i></i> LIVE FEEDS</span><b>${live.length} OPEN</b></div>
+      <p>Drop into an active field as an observer. No spawn, no score, just the battle.</p>
+      <div class="live-feed-list">${live.length ? live.map((r) => `<button class="live-feed" data-watch-room="${esc(r.roomName || 'ALPHA')}" data-watch-mode="${esc(r.mode || 'deathmatch')}"><i></i><span><b>${esc(r.roomName || 'ALPHA')}</b><em>${MODES[r.mode]?.name || 'DEATHMATCH'} · ${r.roomName ? 'LIVE' : 'OPEN'}</em></span><strong>WATCH →</strong></button>`).join('') : '<div class="live-empty">NO LIVE FEEDS YET<br><span>Open a server and it will appear here.</span></div>'}</div>
+      <p class="set-note">Live feeds use the realtime arena channel. A/D cycles observers; EXIT FEED returns to base.</p>
+    </aside>
   </div>`;
 }
 
@@ -1857,6 +2273,7 @@ function openDogTag() {
   const tier = tierFor(lifetimePoints(p));
   const medals = Object.keys(l.medals || {}).map((id) => MEDALS.find((m) => m.id === id)).filter(Boolean).slice(0, 3);
   const fav = Object.entries(l.tankStats || {}).sort((a, b) => (b[1].matches | 0) - (a[1].matches | 0))[0]?.[0] || p.tank;
+  const dossier = buildDossier(p, l);
   root.innerHTML = `<div class="modal-backdrop"></div>
     <div class="dogtag-modal">
       <header><div><h2>COMMANDER DOG TAG</h2><p>Share your record with the squad.</p></div>
@@ -1867,6 +2284,7 @@ function openDogTag() {
       <canvas id="dogtag-canvas" width="900" height="500"></canvas>
       <div class="dogtag-actions">
         <a class="btn" id="dogtag-download" download="ironstorm-dogtag.png">DOWNLOAD PNG</a>
+        <button class="btn" id="dogtag-dossier">OPEN DOSSIER</button>
         <button class="btn btn-ghost" data-dogtag-close>CLOSE</button>
       </div>
     </div>`;
@@ -1903,6 +2321,7 @@ function openDogTag() {
   ctx.textAlign = 'right'; ctx.fillStyle = tier.color; ctx.font = '700 64px monospace';
   ctx.fillText(tierGlyph(tier.id), 844, 300);
   $('#dogtag-download').href = canvas.toDataURL('image/png');
+  $('#dogtag-dossier')?.addEventListener('click', () => openDossierModal(dossier));
   root.querySelectorAll('[data-dogtag-close]').forEach((b) => b.addEventListener('click', () => { root.innerHTML = ''; }));
   root.querySelector('.modal-backdrop')?.addEventListener('click', () => { root.innerHTML = ''; });
 }
@@ -2010,6 +2429,13 @@ function renderGameplay() {
           `<option value="${l.code}" ${(s.lang || 'en') === l.code ? 'selected' : ''}>${l.label}</option>`).join('')}</select>
       </div>
       <p class="set-note">Core menus, controls and training briefings are translated. Arabic switches the interface to right-to-left.</p>
+    </section>
+
+    <section class="set-card install-card">
+      <h3>INSTALL IRONSTORM</h3>
+      <p class="set-note">Install the arena for a full-screen landscape shell, home-screen icon and offline field manual.</p>
+      <button class="btn" data-install ${canInstall() ? '' : 'data-install-help'}>INSTALL APP</button>
+      <p class="set-note">On iPhone or iPad, use Share → Add to Home Screen.</p>
     </section>
 
     <section class="set-card account-card">
@@ -2141,6 +2567,7 @@ function wireGameplay() {
     closePane();
     window.dispatchEvent(new CustomEvent('ironstorm:show-auth', { detail: { mode: 'up', from: 'menu' } }));
   });
+  wireInstallButtons($('#pane-root'));
 }
 
 // ---------------------------------------------------------------- auth screen
@@ -2255,6 +2682,9 @@ export function showReport(data) {
   const p = state.profile;
   const prog = levelProgress(p.xp);
   const win = data.won;
+  const local = state.local || loadLocal();
+  const op = operationState(local);
+  const dossier = buildDossier(p, local);
 
   root.innerHTML = `
     <div class="modal-backdrop"></div>
@@ -2298,11 +2728,17 @@ export function showReport(data) {
       ${data.rankedResult ? `<div class="report-ranked"><span>RANKED</span><b>${data.rankedResult.delta >= 0 ? '+' : ''}${data.rankedResult.delta}</b><i>${fmt(data.rankedResult.rating)} RATING · ${data.rankedResult.tier.name}${data.rankedResult.placement ? ' · PLACEMENT' : ''}${data.rankedResult.promotion ? ` · +${fmt(data.rankedResult.promotion.salvage)} SALVAGE PROMOTION` : ''}</i></div>` : ''}
       ${data.medals?.length ? `<div class="report-medals">${data.medals.map((m) =>
         `<span class="rm"><b>${m.name}</b><i>+${m.salvage} SALVAGE</i></span>`).join('')}</div>` : ''}
+      <div class="report-next" style="--op:${op.accent}"><div><span>NEXT OBJECTIVE</span><b>${op.name}</b><i>${op.progress} / ${op.target} ${op.metric.toUpperCase()} · ${op.tag}</i></div><div class="report-next-bar"><i style="width:${Math.round(op.pct * 100)}%"></i></div></div>
       <div class="report-level">
         <div class="rl-line"><span>LEVEL ${prog.level}</span><span>${fmt(p.xp)} XP</span></div>
         <div class="rl-bar"><i style="width:${prog.pct * 100}%"></i></div>
         <div class="rl-next">${fmt(prog.next)} XP TO LEVEL ${prog.level + 1}</div>
         ${data.levelUp ? '<div class="levelup-flash">LEVEL UP — NEW EQUIPMENT UNLOCKED</div>' : ''}
+      </div>
+      <div class="report-utility">
+        <button class="report-util" id="report-dossier">SHARE DOSSIER</button>
+        ${!manualSeen() ? '<button class="report-util" id="report-academy">NEW COMMANDER BRIEFING</button>' : ''}
+        ${canInstall() ? '<button class="report-util" data-install>INSTALL APP</button>' : ''}
       </div>
       <div class="report-actions">
         <button class="btn btn-ghost" id="report-menu">RETURN TO BASE</button>
@@ -2327,6 +2763,12 @@ export function showReport(data) {
 
   $('#report-back')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
   $('#report-menu')?.addEventListener('click', () => { stopReplay(); root.innerHTML = ''; });
+  $('#report-dossier')?.addEventListener('click', () => openDossierModal(dossier));
+  $('#report-academy')?.addEventListener('click', () => {
+    stopReplay(); root.innerHTML = '';
+    openManual({ onAcademy: () => document.dispatchEvent(new CustomEvent('ironstorm:training', { detail: { kind: 'academy' } })) });
+  });
+  wireInstallButtons(root);
   $('#report-again')?.addEventListener('click', () => {
     stopReplay();
     root.innerHTML = '';

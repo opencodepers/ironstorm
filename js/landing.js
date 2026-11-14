@@ -6,6 +6,10 @@ import { $, $$, clamp, rand, pick } from './util.js';
 import { audio } from './audio.js';
 import { state, saveSettings } from './store.js';
 import { MODES, MODE_ORDER, MODE_ICONS, modeFor } from './modes.js';
+import { briefingSnapshot, formatDuration } from './ops.js';
+import { dossierInitials } from './dossier.js';
+import { openManual, manualSeen } from './manual.js';
+import * as net from './net.js';
 
 const TICKER = [
   'IRON CORPS DISPATCH — SECTOR 7 SECURED BY GREEN SQUADRON',
@@ -25,6 +29,7 @@ let clock = 0;
 let last = 0;
 let handlers = {};
 let tickerTimer = 0;
+let briefBound = false;
 const par = { x: 0, y: 0, tx: 0, ty: 0 };
 
 // ---------------------------------------------------------------- api
@@ -36,6 +41,7 @@ export function initLanding(opts = {}) {
 
   buildModeCards();
   renderTicker();
+  bindBriefing();
 
   $('#land-deploy')?.addEventListener('click', () => {
     audio.init(); audio.unlock(); audio.play('ui');
@@ -49,13 +55,24 @@ export function initLanding(opts = {}) {
     audio.play('ui');
     handlers.onAuth?.();
   });
+  $('#land-manual')?.addEventListener('click', () => {
+    audio.play('ui');
+    if (handlers.onManual) handlers.onManual();
+    else openManual();
+  });
+  $('#land-brief-open')?.addEventListener('click', () => {
+    audio.play('ui');
+    handlers.onBrief?.();
+  });
   $$('.land-links [data-jump]').forEach((b) =>
     b.addEventListener('click', () => {
       audio.play('ui');
       if (b.dataset.jump === 'modes') $('#land-modes')?.scrollIntoView({ block: 'nearest' });
+      else if (b.dataset.jump === 'ops') $('#land-brief')?.scrollIntoView({ block: 'nearest' });
       else handlers.onGarage?.();
     })
   );
+  setInterval(() => { if (running) paintBriefing(); }, 30000);
 
   window.addEventListener('resize', () => { if (running) resize(); });
   document.addEventListener('ironstorm:profile', paintModeCards);
@@ -73,6 +90,8 @@ export function showLanding() {
   raf = requestAnimationFrame(loop);
   paintModeCards();
   paintSession();
+  paintBriefing();
+  bindBriefing();
 }
 
 export function hideLanding() {
@@ -137,6 +156,61 @@ function paintSession() {
     btn.textContent = 'SIGN IN';
     btn.classList.remove('signed');
   }
+}
+
+function bindBriefing() {
+  if (briefBound || !state.uid) return;
+  briefBound = true;
+  net.watchLobby(() => { if (running) paintBriefing(); });
+  net.watchDirectory(() => { if (running) paintBriefing(); });
+}
+
+function paintBriefing() {
+  if (!state.profile) return;
+  const b = briefingSnapshot({
+    profile: state.profile,
+    local: state.local,
+    lobby: net.lobby,
+    rooms: net.directory.rooms,
+  });
+  const write = (sel, value) => { const el = $(sel); if (el) el.textContent = value; };
+  write('#land-brief-week', `WEEK ${String(b.week).padStart(2, '0')} · EU-CENTRAL`);
+  write('#land-brief-online', b.online);
+  write('#land-brief-rooms', b.openRooms);
+  write('#land-online', `${b.online} COMMANDERS · ${b.openRooms} OPEN ROOMS`);
+  write('#land-brief-room', b.activeRoom ? `${b.activeRoom.meta?.roomName || 'ALPHA'} · ${b.activeRoom.players} IN FIELD` : 'GLOBAL ARENA READY');
+
+  const op = b.operation;
+  write('#land-brief-op-name', op.name);
+  write('#land-brief-op-brief', op.brief);
+  write('#land-brief-op-progress', `${op.progress} / ${op.target}`);
+  write('#land-brief-op-days', `${b.daysLeft}D LEFT`);
+  const fill = $('#land-brief-op-fill');
+  if (fill) fill.style.width = `${Math.round(op.pct * 100)}%`;
+
+  const next = b.next;
+  write('#land-brief-next-title', next ? next.name : 'ALL REQUISITIONS COMPLETE');
+  write('#land-brief-next-sub', next ? `${next.kind} · ${next.need ? fmtNeed(next.need) + ' XP TO UNLOCK' : 'READY TO REQUISITION'}` : 'Every hull and camouflage is on your roster.');
+  write('#land-brief-unlock', next ? next.name : 'COMPLETE');
+  write('#land-brief-crate', b.crate.ready ? 'READY' : formatDuration(b.crate.msLeft));
+  const doneContracts = b.contracts.filter((c) => c.complete).length;
+  write('#land-brief-contract', `${doneContracts} / ${b.contracts.length}`);
+  write('#land-brief-coalition', `${Math.round(b.coalition.pct * 100)}%`);
+
+  write('#land-brief-name', state.profile.username);
+  write('#land-brief-sigil', dossierInitials(state.profile.username));
+  write('#land-brief-tier', `${b.tier.name} · SEASON ${String(b.week).padStart(2, '0')}`);
+  write('#land-brief-points', b.season.tier.name ? `${b.season.tier.name} · ${Math.round(b.season.pct * 100)}%` : '—');
+  const sigil = $('#land-brief-sigil');
+  if (sigil) sigil.style.color = b.tier.color;
+  const card = $('.brief-command');
+  if (card) card.style.setProperty('--tier', b.tier.color);
+  const manual = $('#land-manual');
+  if (manual) manual.textContent = manualSeen() ? 'FIELD MANUAL' : 'NEW COMMANDER?';
+}
+
+function fmtNeed(n) {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n);
 }
 
 function renderTicker() {

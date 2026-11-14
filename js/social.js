@@ -58,7 +58,7 @@ export function friendsWithStatus(lobby = new Map(), uid = state.uid) {
   });
 }
 
-export function inviteLink({ room, mode, squad } = {}) {
+export function inviteLink({ room, mode, squad, passcode } = {}) {
   const url = new URL(location.href);
   url.hash = '';
   url.search = '';
@@ -67,6 +67,7 @@ export function inviteLink({ room, mode, squad } = {}) {
     if (mode) url.searchParams.set('mode', mode);
   }
   if (squad) url.searchParams.set('squad', squad);
+  if (passcode) url.searchParams.set('pass', passcode);
   return url.toString();
 }
 

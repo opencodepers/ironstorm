@@ -11,6 +11,18 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, {
 export { sb };
 export const net = { online: true, arena: null, roster: new Map() };
 
+// Lightweight command-uplink latency probe for the server browser.
+export async function ping() {
+  const start = performance.now();
+  try {
+    await fetch(`${SB_URL}/auth/v1/health?apikey=${encodeURIComponent(SB_KEY)}`, {
+      method: 'GET', cache: 'no-store', signal: AbortSignal.timeout?.(4000),
+    });
+    return Math.max(1, Math.round(performance.now() - start));
+  } catch { return null; }
+}
+net.ping = ping;
+
 // ------------------------------------------------------------------
 //  Room directory
 //  Every player inside a room publishes it on one presence channel, so
@@ -320,17 +332,152 @@ export async function equipTank(id) {
 }
 
 // ------------------------------------------------------------------
+//  Cross-device regiments
+// ------------------------------------------------------------------
+const cleanRegiment = (row) => row ? {
+  code: row.code,
+  name: row.name,
+  tag: row.tag,
+  color: row.color,
+  motto: row.motto,
+  owner: row.owner_name || row.owner,
+  createdAt: row.created_at ? Date.parse(row.created_at) : Date.now(),
+  open: true,
+} : null;
+
+export async function fetchMyRegiment() {
+  if (!state.uid || state.mode !== 'account') return { ok: true, regiment: null };
+  const { data, error } = await sb
+    .from('regiment_members')
+    .select('role,regiments(code,name,tag,color,motto,owner,owner_name,created_at)')
+    .eq('player_id', state.uid)
+    .maybeSingle();
+  if (error) return { ok: false, error: friendly(error.message), regiment: null };
+  return { ok: true, regiment: cleanRegiment(data?.regiments), role: data?.role || null };
+}
+
+export async function createRegimentRemote({ name, tag, color, motto } = {}) {
+  const { data, error } = await sb.rpc('create_regiment', {
+    p_name: name, p_tag: tag, p_color: color, p_motto: motto,
+  });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, regiment: cleanRegiment(data?.regiment), role: data?.role || 'COMMANDER' };
+}
+
+export async function joinRegimentRemote(code) {
+  const { data, error } = await sb.rpc('join_regiment', { p_code: code });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, regiment: cleanRegiment(data?.regiment), role: data?.role || 'SOLDIER' };
+}
+
+export async function updateRegimentRemote({ code, name, tag, color, motto }) {
+  const { data, error } = await sb.rpc('update_regiment', {
+    p_code: code, p_name: name, p_tag: tag, p_color: color, p_motto: motto,
+  });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, regiment: cleanRegiment(data?.regiment) };
+}
+
+export async function leaveRegimentRemote() {
+  const { error } = await sb.rpc('leave_regiment');
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true };
+}
+
+export async function fetchRegimentRoster(code) {
+  const { data, error } = await sb
+    .from('regiment_members')
+    .select('role,joined_at,player_id,profiles!inner(username,level)')
+    .eq('regiment_code', code)
+    .order('joined_at', { ascending: true });
+  if (error) return { ok: false, error: friendly(error.message), rows: [] };
+  return {
+    ok: true,
+    rows: (data || []).map((row) => ({
+      name: row.profiles?.username || 'COMMANDER',
+      level: row.profiles?.level | 0,
+      role: row.role,
+      joinedAt: row.joined_at,
+    })),
+  };
+}
+
+// ------------------------------------------------------------------
+//  Global map gallery
+// ------------------------------------------------------------------
+export async function fetchGalleryMaps(limit = 60) {
+  const { data, error } = await sb
+    .from('community_maps')
+    .select('id,code,name,author_name,votes,created_at')
+    .order('votes', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(Math.max(1, Math.min(limit, 100)));
+  if (error) return { ok: false, error: friendly(error.message), rows: [] };
+  return { ok: true, rows: data || [] };
+}
+
+export async function publishGalleryMap({ code, name }) {
+  const { data, error } = await sb.rpc('publish_gallery_map', { p_code: code, p_name: name });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, row: data };
+}
+
+export async function voteGalleryMap(id) {
+  const { data, error } = await sb.rpc('vote_gallery_map', { p_id: id });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, votes: data | 0 };
+}
+
+export async function reportGalleryMap(id) {
+  const { data, error } = await sb.rpc('report_gallery_map', {
+    p_id: id, p_reason: 'broken layout',
+  });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, hidden: !!data };
+}
+
+// ------------------------------------------------------------------
+//  Private rooms
+//  The passcode never enters the directory or the arena payload;
+//  admission and the private channel come from the database RPC.
+// ------------------------------------------------------------------
+export async function hostPrivateRoom({ mode, name, passcode, rules }) {
+  const { data, error } = await sb.rpc('host_private_room', {
+    p_mode: mode, p_name: name, p_passcode: passcode, p_rules: rules || {},
+  });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, channel: data?.channel, roomId: data?.id, expiresAt: data?.expires_at };
+}
+
+export async function joinPrivateRoom({ mode, name, passcode }) {
+  const { data, error } = await sb.rpc('join_private_room', {
+    p_mode: mode, p_name: name, p_passcode: passcode,
+  });
+  if (error) return { ok: false, error: friendly(error.message) };
+  return { ok: true, channel: data?.channel, roomId: data?.id };
+}
+
+const publicRules = (rules) => {
+  if (!rules || typeof rules !== 'object') return null;
+  const { passcode, ...safe } = rules;
+  return safe;
+};
+
+// ------------------------------------------------------------------
 //  Realtime arena
 // ------------------------------------------------------------------
 export function connectArena(handlers = {}, room = null) {
   if (!state.uid) return { ok: false, error: 'not signed in', leave() {} };
   const isGuest = state.mode === 'guest';
+  const isPrivate = !!room?.channel;
   const uid = state.uid;
   const p = state.profile;
-  const channelName = room?.key ? `${ARENA_CHANNEL}:${room.key}` : ARENA_CHANNEL;
+  const channelName = room?.channel || (room?.key ? `${ARENA_CHANNEL}:${room.key}` : ARENA_CHANNEL);
+  const safeRules = publicRules(room?.rules);
 
   const channel = sb.channel(channelName, {
     config: {
+      private: isPrivate,
       broadcast: { self: false, ack: false },
       presence: { key: uid },
     },
@@ -346,7 +493,10 @@ export function connectArena(handlers = {}, room = null) {
     mode: room?.mode || 'deathmatch',
     room: room?.key || '',
     roomName: room?.name || '',
-    rules: room?.rules || null,
+    rules: safeRules,
+    reg: state.regiment?.code || '',
+    regTag: state.regiment?.tag || '',
+    regName: state.regiment?.name || '',
     since: Date.now(),
     em: state.local?.cosmetics?.emblem || 'none',
     tr: state.local?.cosmetics?.trail || 'none',
@@ -417,7 +567,7 @@ export function connectArena(handlers = {}, room = null) {
     net.online = status === 'SUBSCRIBED';
     if (status === 'SUBSCRIBED') {
       try { await channel.track(meta); } catch { /* presence may be disabled */ }
-      if (room?.key) {
+      if (room?.key && !isPrivate) {
         trackDirectory({
           mode: room.mode,
           room: room.key,
@@ -425,6 +575,7 @@ export function connectArena(handlers = {}, room = null) {
           name: p.username,
           level: p.level,
           rules: meta.rules,
+          reg: meta.reg,
           since: meta.since,
         });
       }
@@ -458,17 +609,19 @@ export function connectArena(handlers = {}, room = null) {
     sendKill(payload) { send('kill', { ...payload, killer: uid, killerName: p.username }); },
     sendChat(text) { send('chat', { from: p.username, text: String(text).slice(0, 120), t: Date.now() }); },
     sendRules(next) {
-      meta.rules = next;
-      send('rules', { rules: next, from: uid });
+      const safe = publicRules(next);
+      meta.rules = safe;
+      send('rules', { rules: safe, from: uid });
       try { channel.track(meta); } catch { /* presence may be disabled */ }
-      if (room?.key) {
+      if (room?.key && !isPrivate) {
         trackDirectory({
           mode: room.mode,
           room: room.key,
           roomName: room.name,
           name: p.username,
           level: p.level,
-          rules: next,
+          rules: safe,
+          reg: meta.reg,
           since: meta.since,
         });
       }

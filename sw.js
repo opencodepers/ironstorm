@@ -2,11 +2,14 @@
    Precache the static game, serve styles and the shell network-first, and
    keep query-versioned assets readable offline. Supabase traffic is never cached. */
 
-const CACHE = 'ironstorm-v10';
+const CACHE = 'ironstorm-v11';
 const CORE = [
   './',
   './index.html',
+  './dossier.html',
   './manifest.webmanifest',
+  './styles/command.css',
+  './styles/dossier.css',
   './styles/menu.css',
   './styles/game.css',
   './styles/landing.css',
@@ -16,8 +19,14 @@ const CORE = [
   './js/audio.js',
   './js/community.js',
   './js/config.js',
+  './js/dossier.js',
+  './js/gallery.js',
   './js/gamepad.js',
   './js/i18n.js',
+  './js/install.js',
+  './js/manual.js',
+  './js/ops.js',
+  './js/regiments.js',
   './js/ranked.js',
   './js/theater.js',
   './js/cosmetics.js',
@@ -39,6 +48,7 @@ const CORE = [
   './assets/ui/favicon.svg',
   './assets/ui/icon-192.png',
   './assets/ui/icon-512.png',
+  './assets/ui/og-ironstorm.png',
 ];
 
 self.addEventListener('install', (event) => {

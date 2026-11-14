@@ -81,7 +81,9 @@ export function ruleSet(raw) {
   const limit = ROOM_LIMITS.includes(src.limit) ? src.limit : null;
   const map = typeof src.map === 'string' ? src.map : 'rotate';
   const difficulty = BOT_LEVELS[src.difficulty] ? src.difficulty : 'regular';
-  return { mutator, map, bots, difficulty, weather, limit };
+  const passcode = String(src.passcode || '').replace(/[^A-Z0-9_-]/gi, '').slice(0, 12).toUpperCase();
+  const privateRoom = !!src.private || !!passcode;
+  return { mutator, map, bots, difficulty, weather, limit, private: privateRoom, passcode: privateRoom ? passcode : '' };
 }
 
 export function mutateStats(stats, mutatorId) {
