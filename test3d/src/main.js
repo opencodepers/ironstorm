@@ -29,6 +29,8 @@ const ui = {
   reticle: $('reticle'),
   rangeReadout: $('range-readout'),
   reticleAmmo: $('reticle-ammo'),
+  impactReticle: $('impact-reticle'),
+  impactReadout: $('impact-readout'),
   score: $('score'),
   best: $('best'),
   combo: $('combo'),
@@ -155,6 +157,7 @@ let range;
 let tankRoot;
 let turretPivot;
 let barrelPivot;
+let barrelRestPosition = null;
 let trackMaterial;
 let trackOffset = 0;
 let triangles = 0;
@@ -175,6 +178,16 @@ const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const aimPoint = new THREE.Vector3();
+const reticleMuzzle = new THREE.Vector3();
+const reticleDirection = new THREE.Vector3();
+const reticleVelocity = new THREE.Vector3();
+const reticleImpact = new THREE.Vector3();
+const reticleProjection = new THREE.Vector3();
+const reticleQuaternion = new THREE.Quaternion();
+const stableTankQuaternion = new THREE.Quaternion();
+const turretAimQuaternion = new THREE.Quaternion();
+const barrelAimQuaternion = new THREE.Quaternion();
+const xAxis = new THREE.Vector3(1, 0, 0);
 const sunDirection = new THREE.Vector3();
 const sunLight = new THREE.DirectionalLight();
 const fillLight = new THREE.DirectionalLight();
@@ -184,6 +197,8 @@ const back = new THREE.Vector3();
 const desiredCamera = new THREE.Vector3();
 const desiredLook = new THREE.Vector3();
 const cameraLook = new THREE.Vector3();
+const stableCameraPosition = new THREE.Vector3();
+const aimCamera = new THREE.PerspectiveCamera(56, 1, 0.1, 1500);
 const targetQuaternion = new THREE.Quaternion();
 const basis = new THREE.Matrix4();
 const smoothedForward = new THREE.Vector3();
@@ -213,14 +228,18 @@ const recoil = {
   pitch: 0,
   roll: 0,
   heave: 0,
+  barrel: 0,
   pitchVelocity: 0,
   rollVelocity: 0,
   heaveVelocity: 0,
+  barrelVelocity: 0,
 };
 
 const shake = {
   amount: 0,
   timer: 0,
+  kick: 0,
+  fov: 0,
 };
 
 const gun = {
@@ -548,6 +567,7 @@ async function loadVehicle() {
   barrelPivot = gltf.scene.getObjectByName('barrel_pivot');
   if (!turretPivot) throw new Error('GLB is missing the turret_pivot node');
   if (!barrelPivot) throw new Error('GLB is missing the barrel_pivot node');
+  barrelRestPosition = barrelPivot.position.clone();
 
   trackMaterial = materials.get('履带');
   if (trackMaterial) {
@@ -616,10 +636,15 @@ function resetTank(snapCamera = false) {
   recoil.pitch = 0;
   recoil.roll = 0;
   recoil.heave = 0;
+  recoil.barrel = 0;
   recoil.pitchVelocity = 0;
   recoil.rollVelocity = 0;
   recoil.heaveVelocity = 0;
+  recoil.barrelVelocity = 0;
   shake.amount = 0;
+  shake.timer = 0;
+  shake.kick = 0;
+  shake.fov = 0;
   gun.lasedRange = 0;
   gun.lasedTimer = 0;
   trackDistance = 0;
@@ -629,7 +654,10 @@ function resetTank(snapCamera = false) {
     tankRoot.quaternion.identity();
   }
   if (turretPivot) turretPivot.rotation.set(0, 0, 0);
-  if (barrelPivot) barrelPivot.rotation.set(0, 0, 0);
+  if (barrelPivot) {
+    barrelPivot.rotation.set(0, 0, 0);
+    if (barrelRestPosition) barrelPivot.position.copy(barrelRestPosition);
+  }
   if (contactShadow) {
     contactShadow.position.set(tank.x, terrainHeight(tank.x, tank.z) + 0.06, tank.z);
     contactShadow.rotation.y = tank.heading;
@@ -638,12 +666,16 @@ function resetTank(snapCamera = false) {
 }
 
 function updateRecoil(dt) {
-  recoil.pitchVelocity += (-recoil.pitch * 92 - recoil.pitchVelocity * 9.5) * dt;
+  // The gun is a sprung mass inside the tank: it snaps back quickly, stops hard,
+  // and returns to battery while the heavier hull is still settling.
+  recoil.pitchVelocity += (-recoil.pitch * 78 - recoil.pitchVelocity * 7.6) * dt;
   recoil.pitch += recoil.pitchVelocity * dt;
-  recoil.rollVelocity += (-recoil.roll * 84 - recoil.rollVelocity * 9) * dt;
+  recoil.rollVelocity += (-recoil.roll * 70 - recoil.rollVelocity * 7.2) * dt;
   recoil.roll += recoil.rollVelocity * dt;
-  recoil.heaveVelocity += (-recoil.heave * 126 - recoil.heaveVelocity * 12) * dt;
+  recoil.heaveVelocity += (-recoil.heave * 96 - recoil.heaveVelocity * 9.4) * dt;
   recoil.heave += recoil.heaveVelocity * dt;
+  recoil.barrelVelocity += (-recoil.barrel * 210 - recoil.barrelVelocity * 17) * dt;
+  recoil.barrel += recoil.barrelVelocity * dt;
 }
 
 function applyRecoil() {
@@ -705,6 +737,7 @@ function updateMotion(dt) {
   targetQuaternion.setFromRotationMatrix(basis);
   const blend = 1 - Math.exp(-8.5 * dt);
   tankRoot.quaternion.slerp(targetQuaternion, blend);
+  stableTankQuaternion.copy(tankRoot.quaternion);
   applyRecoil();
   tankRoot.position.set(tank.x, tank.y, tank.z);
   tankRoot.position.y += recoil.heave;
@@ -754,22 +787,62 @@ function solveElevation(distance, velocity) {
   return 0.5 * Math.asin(ratio);
 }
 
+function intersectHeightfield(origin, direction, out) {
+  const maxDistance = 800;
+  const step = 5;
+  let previous = 0;
+  for (let distance = step; distance <= maxDistance; distance += step) {
+    const x = origin.x + direction.x * distance;
+    const y = origin.y + direction.y * distance;
+    const z = origin.z + direction.z * distance;
+    if (y <= terrainHeight(x, z)) {
+      let low = previous;
+      let high = distance;
+      for (let i = 0; i < 6; i++) {
+        const middle = (low + high) * 0.5;
+        const mx = origin.x + direction.x * middle;
+        const my = origin.y + direction.y * middle;
+        const mz = origin.z + direction.z * middle;
+        if (my <= terrainHeight(mx, mz)) high = middle;
+        else low = middle;
+      }
+      out.copy(origin).addScaledVector(direction, high);
+      return true;
+    }
+    previous = distance;
+  }
+  return false;
+}
+
 function updateAim(dt) {
   if (!turretPivot || !barrelPivot) return;
-  raycaster.setFromCamera(pointer.ndc, camera);
+  raycaster.setFromCamera(pointer.ndc, aimCamera);
 
-  // Aim at the actual collider under the reticle. This is what makes the
-  // crosshair meaningful at range instead of mapping mouse height to elevation.
+  // Resolve the point under the mouse against targets, rocks and the actual
+  // heightfield. The old horizontal-plane fallback made ground shots aim at
+  // empty air whenever the cursor was over a slope.
   let hasAimPoint = false;
+  let nearest = Infinity;
   if (range) {
     const targetHits = raycaster.intersectObjects(range.colliders, false);
     for (const hit of targetHits) {
       const target = hit.object.userData.target;
-      if (!target || !target.alive) continue;
+      if (!target || !target.alive || hit.distance >= nearest) continue;
       aimPoint.copy(hit.point);
+      nearest = hit.distance;
       hasAimPoint = true;
-      break;
     }
+  }
+  if (terrain?.rocks) {
+    const rockHits = raycaster.intersectObject(terrain.rocks, false);
+    if (rockHits.length && rockHits[0].distance < nearest) {
+      aimPoint.copy(rockHits[0].point);
+      nearest = rockHits[0].distance;
+      hasAimPoint = true;
+    }
+  }
+  if (!hasAimPoint && intersectHeightfield(raycaster.ray.origin, raycaster.ray.direction, aimPoint)) {
+    hasAimPoint = true;
   }
   if (!hasAimPoint) {
     aimPlane.constant = -(tank.y + 1.45);
@@ -805,7 +878,13 @@ function updateAim(dt) {
 
 function applyVisuals() {
   if (turretPivot) turretPivot.rotation.y = tank.turretYaw;
-  if (barrelPivot) barrelPivot.rotation.x = tank.gunPitch;
+  if (barrelPivot) {
+    barrelPivot.rotation.x = tank.gunPitch;
+    if (barrelRestPosition) {
+      barrelPivot.position.copy(barrelRestPosition);
+      barrelPivot.position.z += recoil.barrel;
+    }
+  }
 }
 
 function updateTracks(dt) {
@@ -813,6 +892,44 @@ function updateTracks(dt) {
   trackOffset = (trackOffset + tank.speed * dt * 0.16) % 1;
   for (const map of [trackMaterial.map, trackMaterial.normalMap, trackMaterial.roughnessMap]) {
     if (map) map.offset.y = trackOffset;
+  }
+}
+
+function updateReticles() {
+  if (!ui.impactReticle || !barrelPivot || !camera) return;
+  barrelPivot.updateMatrixWorld(true);
+  barrelPivot.getWorldPosition(reticleMuzzle);
+  reticleQuaternion.copy(stableTankQuaternion);
+  turretAimQuaternion.setFromAxisAngle(up, tank.turretYaw);
+  reticleQuaternion.multiply(turretAimQuaternion);
+  barrelAimQuaternion.setFromAxisAngle(xAxis, tank.gunPitch);
+  reticleQuaternion.multiply(barrelAimQuaternion);
+  reticleDirection.copy(forwardFromGun).applyQuaternion(reticleQuaternion).normalize();
+  reticleMuzzle.addScaledVector(reticleDirection, 5.9);
+
+  const distance = Math.max(8, reticleMuzzle.distanceTo(aimPoint));
+  const spec = SHELLS[gun.selected];
+  const flightTime = Math.min(4, distance / spec.velocity);
+  reticleImpact.copy(reticleMuzzle);
+  reticleVelocity.copy(reticleDirection).multiplyScalar(spec.velocity).addScaledVector(forward, tank.speed * 0.25);
+  const step = flightTime / 20;
+  for (let i = 0; i < 20; i++) {
+    reticleVelocity.y -= 9.81 * step;
+    reticleVelocity.multiplyScalar(Math.exp(-spec.drag * step));
+    reticleImpact.addScaledVector(reticleVelocity, step);
+  }
+
+  reticleProjection.copy(reticleImpact).project(aimCamera);
+  const x = (reticleProjection.x * 0.5 + 0.5) * window.innerWidth;
+  const y = (-reticleProjection.y * 0.5 + 0.5) * window.innerHeight;
+  const onScreen = reticleProjection.z > -1 && reticleProjection.z < 1
+    && x > -40 && x < window.innerWidth + 40
+    && y > -40 && y < window.innerHeight + 40;
+  ui.impactReticle.classList.toggle('is-offscreen', !onScreen);
+  if (onScreen) ui.impactReticle.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  if (ui.impactReadout) {
+    const label = `${Math.round(distance)} M`;
+    if (ui.impactReadout.textContent !== label) ui.impactReadout.textContent = label;
   }
 }
 
@@ -843,26 +960,50 @@ function updateCamera(dt, snap = false) {
     cameraRig.look.lerp(desiredLook, 1 - Math.exp(-6.2 * dt));
   }
 
+  // Capture the settled camera before the blast shove. Aim and impact
+  // reticles use this stable transform, so recoil shakes the view without
+  // dragging the cursor ray across the terrain.
+  stableCameraPosition.copy(camera.position);
+
+  // The camera gets a physical shove from the blast before the random jitter:
+  // back and up, followed by a brief FOV punch and a damped lens jolt.
+  shake.kick *= Math.exp(-9.2 * dt);
+  shake.fov *= Math.exp(-7.5 * dt);
+  if (shake.kick > 0.001) {
+    camera.position.addScaledVector(back, shake.kick * 0.55);
+    camera.position.y += shake.kick * 0.22;
+  }
+
   cameraLook.copy(cameraRig.look);
   if (shake.amount > 0.0001) {
-    const amount = Math.min(0.24, shake.amount);
+    const amount = Math.min(0.55, shake.amount);
     camera.position.x += (Math.random() - 0.5) * amount;
     camera.position.y += (Math.random() - 0.5) * amount * 0.7;
     camera.position.z += (Math.random() - 0.5) * amount;
     cameraLook.x += (Math.random() - 0.5) * amount * 0.5;
     cameraLook.y += (Math.random() - 0.5) * amount * 0.35;
-    shake.amount *= Math.exp(-9.5 * dt);
+    shake.amount *= Math.exp(-7.2 * dt);
     shake.timer += dt;
   } else {
     shake.amount = 0;
   }
   camera.lookAt(cameraLook);
+  aimCamera.position.copy(stableCameraPosition);
+  aimCamera.quaternion.copy(camera.quaternion);
+  if (shake.kick > 0.001) {
+    camera.rotateZ((Math.random() - 0.5) * 0.035 * shake.kick);
+    camera.rotateX((Math.random() - 0.5) * 0.02 * shake.kick);
+  }
 
-  const targetFov = 56 + Math.min(Math.abs(tank.speed) * 0.48, 7) + shake.timer * 2.2;
+  const targetFov = 56 + Math.min(Math.abs(tank.speed) * 0.48, 7) + shake.timer * 1.4 + shake.fov + shake.kick * 2.4;
   if (Math.abs(camera.fov - targetFov) > 0.04) {
     camera.fov = targetFov;
     camera.updateProjectionMatrix();
   }
+  aimCamera.aspect = camera.aspect;
+  aimCamera.fov = camera.fov;
+  aimCamera.updateProjectionMatrix();
+  aimCamera.updateMatrixWorld(true);
   shake.timer = Math.max(0, shake.timer - dt * 5);
 }
 
@@ -951,14 +1092,17 @@ function fire() {
   gun.lastShot = performance.now();
   audio.fire(spec.id);
   window.setTimeout(() => audio.reload(), 420);
-  fx.muzzle(muzzlePosition, gunDirection);
-  post.flash(0.85);
+  fx.muzzle(muzzlePosition, gunDirection, tankRoot.position);
+  post.flash(0.95);
   flashScreen();
-  recoil.pitchVelocity += 1.35 * spec.recoil;
-  recoil.rollVelocity += (Math.random() - 0.5) * 0.72 * spec.recoil;
-  recoil.heaveVelocity -= 0.46 * spec.recoil;
-  shake.amount = Math.min(0.28, shake.amount + 0.15 * spec.recoil);
-  shake.timer = Math.min(1.4, shake.timer + 0.55);
+  recoil.pitchVelocity += 1.7 * spec.recoil;
+  recoil.rollVelocity += (Math.random() - 0.5) * 0.9 * spec.recoil;
+  recoil.heaveVelocity -= 0.62 * spec.recoil;
+  recoil.barrelVelocity += 4.8 * spec.recoil;
+  shake.amount = Math.min(0.52, shake.amount + 0.36 * spec.recoil);
+  shake.fov = Math.min(2.6, shake.fov + 1.8);
+  shake.kick = Math.min(1.35, shake.kick + 1);
+  shake.timer = Math.min(1.4, shake.timer + 0.7);
   gun.lasedTimer = Math.max(0, gun.lasedTimer - 0.6);
   updateAmmoUi();
   updateHud(0);
@@ -1254,6 +1398,7 @@ function animate() {
     updateTracks(dt);
     updateGunnery(dt);
     updateCamera(dt);
+    updateReticles();
     updateHud(dt);
   }
   updateSun();

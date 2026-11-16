@@ -477,5 +477,5 @@ export function createTerrain() {
   rocks.receiveShadow = true;
   group.add(rocks);
 
-  return { group, ground, size, material };
+  return { group, ground, rocks, size, material };
 }

@@ -1,6 +1,7 @@
 export function createAudio() {
   let context = null;
   let master = null;
+  let compressor = null;
   let noiseBuffer = null;
   let muted = false;
 
@@ -11,7 +12,14 @@ export function createAudio() {
       context = new AudioContextClass();
       master = context.createGain();
       master.gain.value = muted ? 0 : 0.42;
-      master.connect(context.destination);
+      compressor = context.createDynamicsCompressor();
+      compressor.threshold.value = -16;
+      compressor.knee.value = 18;
+      compressor.ratio.value = 5;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.28;
+      master.connect(compressor);
+      compressor.connect(context.destination);
 
       const length = Math.floor(context.sampleRate * 1.6);
       noiseBuffer = context.createBuffer(1, length, context.sampleRate);
@@ -27,9 +35,9 @@ export function createAudio() {
     return true;
   };
 
-  const noise = (duration, gain, filterType, frequency, endFrequency = frequency) => {
+  const noise = (duration, gain, filterType, frequency, endFrequency = frequency, delay = 0) => {
     if (!ensure()) return null;
-    const now = context.currentTime;
+    const now = context.currentTime + delay;
     const source = context.createBufferSource();
     source.buffer = noiseBuffer;
     const filter = context.createBiquadFilter();
@@ -47,9 +55,9 @@ export function createAudio() {
     return { source, filter, envelope };
   };
 
-  const tone = (type, duration, gain, startFrequency, endFrequency) => {
+  const tone = (type, duration, gain, startFrequency, endFrequency, delay = 0) => {
     if (!ensure()) return;
-    const now = context.currentTime;
+    const now = context.currentTime + delay;
     const oscillator = context.createOscillator();
     oscillator.type = type;
     oscillator.frequency.setValueAtTime(startFrequency, now);
@@ -75,10 +83,18 @@ export function createAudio() {
     },
     fire(shell) {
       if (!ensure()) return;
-      noise(0.85, 0.85, 'lowpass', 2600, 110);
-      tone('sine', 0.7, 0.9, 88, 31);
-      noise(0.12, 0.32, 'highpass', 2400, 1400);
-      if (shell === 'HE') tone('triangle', 0.5, 0.18, 56, 28);
+      const heavy = shell === 'HE' || shell === 'HEAT';
+      // Supersonic crack, propellant body, low-frequency pressure wave, then
+      // the mechanical recoil clank and a delayed terrain echo.
+      noise(0.2, 0.42, 'highpass', 5200, 900);
+      noise(1.25, 0.98, 'lowpass', 2100, 55);
+      tone('sine', 1.15, 1.3, heavy ? 54 : 62, heavy ? 19 : 23);
+      tone('triangle', 0.34, 0.48, 180, 48);
+      if (heavy) tone('sine', 1.5, 0.4, 44, 18);
+      tone('triangle', 0.12, 0.16, 220, 70, 0.38);
+      tone('triangle', 0.09, 0.1, 1250, 420, 0.46);
+      noise(1.2, 0.18, 'lowpass', 520, 65, 0.28);
+      tone('sine', 0.8, 0.16, 43, 20, 0.24);
     },
     reload() {
       if (!ensure()) return;

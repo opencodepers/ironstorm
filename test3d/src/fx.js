@@ -40,27 +40,41 @@ function makeSoftTexture() {
 function makeFlashTexture() {
   return canvasTexture(256, (context, size) => {
     context.translate(size / 2, size / 2);
-    for (let i = 0; i < 10; i++) {
-      context.rotate(Math.PI / 5);
-      const gradient = context.createLinearGradient(0, 0, 0, -size * 0.46);
-      gradient.addColorStop(0, 'rgba(255,255,255,0)');
-      gradient.addColorStop(0.2, 'rgba(255,240,185,0.96)');
-      gradient.addColorStop(1, 'rgba(255,145,40,0)');
-      context.fillStyle = gradient;
+
+    const halo = context.createRadialGradient(0, 0, 0, 0, 0, size * 0.48);
+    halo.addColorStop(0, 'rgba(255,255,255,0.98)');
+    halo.addColorStop(0.16, 'rgba(255,247,205,0.84)');
+    halo.addColorStop(0.42, 'rgba(255,174,74,0.42)');
+    halo.addColorStop(0.72, 'rgba(255,98,26,0.12)');
+    halo.addColorStop(1, 'rgba(255,70,10,0)');
+    context.fillStyle = halo;
+    context.beginPath();
+    context.arc(0, 0, size * 0.48, 0, Math.PI * 2);
+    context.fill();
+
+    for (let i = 0; i < 14; i++) {
+      const angle = (i / 14) * Math.PI * 2 + Math.random() * 0.24;
+      const distance = size * (0.16 + Math.random() * 0.17);
+      const radius = size * (0.09 + Math.random() * 0.1);
+      const x = Math.cos(angle) * distance;
+      const y = Math.sin(angle) * distance;
+      const lobe = context.createRadialGradient(x, y, 0, x, y, radius);
+      lobe.addColorStop(0, 'rgba(255,232,164,0.38)');
+      lobe.addColorStop(0.55, 'rgba(255,138,44,0.18)');
+      lobe.addColorStop(1, 'rgba(255,80,12,0)');
+      context.fillStyle = lobe;
       context.beginPath();
-      context.moveTo(-size * 0.035, 0);
-      context.lineTo(0, -size * 0.46);
-      context.lineTo(size * 0.035, 0);
-      context.closePath();
+      context.arc(x, y, radius, 0, Math.PI * 2);
       context.fill();
     }
-    const core = context.createRadialGradient(0, 0, 0, 0, 0, size * 0.28);
+
+    const core = context.createRadialGradient(0, 0, 0, 0, 0, size * 0.25);
     core.addColorStop(0, 'rgba(255,255,255,1)');
-    core.addColorStop(0.3, 'rgba(255,241,190,0.98)');
-    core.addColorStop(1, 'rgba(255,126,20,0)');
+    core.addColorStop(0.32, 'rgba(255,246,206,0.96)');
+    core.addColorStop(1, 'rgba(255,143,38,0)');
     context.fillStyle = core;
     context.beginPath();
-    context.arc(0, 0, size * 0.28, 0, Math.PI * 2);
+    context.arc(0, 0, size * 0.25, 0, Math.PI * 2);
     context.fill();
   });
 }
@@ -480,16 +494,17 @@ export function createFx(scene, renderer) {
   const soft = makeSoftTexture();
   const spark = makeSparkTexture();
   const smoke = new ParticlePool(scene, { count: 420, texture: soft, blending: THREE.NormalBlending });
-  const dust = new ParticlePool(scene, { count: 360, texture: soft, blending: THREE.NormalBlending });
+  const dust = new ParticlePool(scene, { count: 520, texture: soft, blending: THREE.NormalBlending });
   const sparks = new ParticlePool(scene, { count: 320, texture: spark, blending: THREE.AdditiveBlending });
   const fire = new ParticlePool(scene, { count: 260, texture: soft, blending: THREE.AdditiveBlending });
+  const debris = new ParticlePool(scene, { count: 220, texture: soft, blending: THREE.NormalBlending });
   const shockwaves = new Shockwaves(scene);
   const lasers = new LaserBeams(scene);
   const flashes = new FlashSprites(scene);
   const lights = new PulseLights(scene);
   const scorch = new DecalLayer(scene, makeScorchTexture(), 40, 0.88);
   const tracks = new DecalLayer(scene, makeTrackTexture(), 220, 0.72);
-  const pools = [smoke, dust, sparks, fire];
+  const pools = [smoke, dust, sparks, fire, debris];
   const size = new THREE.Vector2();
 
   const resize = () => {
@@ -503,46 +518,85 @@ export function createFx(scene, renderer) {
     return _spread;
   };
 
-  const emitMuzzle = (position, direction) => {
-    flashes.spawn(_position.copy(position).addScaledVector(direction, 0.18), _random(3.8, 5.6), 0.08, 0xffe0a2);
-    flashes.spawn(position, _random(2.2, 3.3), 0.055, 0xff9b45);
+  const emitMuzzle = (position, direction, origin = null) => {
+    const groundX = origin ? origin.x : position.x;
+    const groundY = origin ? origin.y + 0.07 : position.y - 2.4;
+    const groundZ = origin ? origin.z : position.z;
 
-    for (let i = 0; i < 11; i++) {
-      const spread = randomVector(_random(0.7, 2.6));
+    // A 125 mm charge is mostly a flash and an overpressure event. Keep the
+    // white-hot core short, then let the dirty smoke and ground dust dominate.
+    flashes.spawn(_position.copy(position).addScaledVector(direction, 0.65), _random(4.8, 6.8), 0.12, 0xfff0c8);
+    flashes.spawn(_position.copy(position).addScaledVector(direction, 0.18), _random(2.8, 4.2), 0.085, 0xffc36d);
+    flashes.spawn(position, _random(2.2, 3.2), 0.055, 0xff8d3f);
+
+    for (let i = 0; i < 22; i++) {
+      const spread = randomVector(_random(0.9, 4.8));
       smoke.spawn({
-        position: _position.copy(position).addScaledVector(spread, _random(0.1, 0.45)),
-        velocity: _velocity.copy(direction).multiplyScalar(_random(1.8, 4.5)).add(spread),
-        life: _random(1.1, 2.2),
-        size: _random(0.45, 1.0),
-        growth: _random(0.7, 1.5),
-        gravity: -0.06,
-        drag: 1.4,
-        color: i % 3 === 0 ? 0x7a6a51 : 0x4d4b40,
-        opacity: _random(0.16, 0.32),
+        position: _position.copy(position).addScaledVector(spread, _random(0.15, 0.8)),
+        velocity: _velocity.copy(direction).multiplyScalar(_random(3.5, 9.0)).add(spread),
+        life: _random(1.5, 3.2),
+        size: _random(0.4, 1.25),
+        growth: _random(1.4, 2.8),
+        gravity: -0.08,
+        drag: 1.15,
+        color: i % 4 === 0 ? 0x9a8970 : i % 3 === 0 ? 0x6a604e : 0x4d4b40,
+        opacity: _random(0.18, 0.34),
       });
     }
 
-    for (let i = 0; i < 9; i++) {
-      const spread = randomVector(_random(0.5, 2.5));
+    // The blast wave lifts the surface soil around the vehicle in a ring. This
+    // is the cue that sells the energy far more than a larger orange sprite.
+    for (let i = 0; i < 30; i++) {
+      const angle = (i / 30) * Math.PI * 2 + _random(-0.12, 0.12);
+      const radius = _random(1.2, 7.5);
+      const outX = Math.cos(angle);
+      const outZ = Math.sin(angle);
+      dust.spawn({
+        position: _position.set(groundX + outX * radius, groundY + _random(0.05, 0.6), groundZ + outZ * radius),
+        velocity: _velocity.set(outX * _random(3.5, 10), _random(0.5, 2.6), outZ * _random(3.5, 10)),
+        life: _random(1.2, 2.8),
+        size: _random(0.8, 1.9),
+        growth: _random(0.9, 2.0),
+        gravity: -0.05,
+        drag: 1.05,
+        color: i % 3 === 0 ? 0x9a8a70 : 0x756957,
+        opacity: _random(0.12, 0.24),
+      });
+    }
+
+    for (let i = 0; i < 20; i++) {
+      const angle = _random(0, Math.PI * 2);
+      const outX = Math.cos(angle);
+      const outZ = Math.sin(angle);
+      debris.spawn({
+        position: _position.set(groundX + outX * _random(0.4, 4.0), groundY + 0.12, groundZ + outZ * _random(0.4, 4.0)),
+        velocity: _velocity.set(outX * _random(4, 12), _random(2, 6), outZ * _random(4, 12)),
+        life: _random(0.5, 1.15),
+        size: _random(0.05, 0.14),
+        gravity: 14,
+        drag: 0.35,
+        color: 0x4c3d2b,
+        opacity: 1,
+      });
+    }
+
+    for (let i = 0; i < 12; i++) {
+      const spread = randomVector(_random(0.5, 2.8));
       sparks.spawn({
-        position: _position.copy(position).addScaledVector(direction, _random(0.0, 0.6)),
-        velocity: _velocity.copy(direction).multiplyScalar(_random(8, 17)).add(spread),
-        life: _random(0.2, 0.52),
-        size: _random(0.045, 0.11),
+        position: _position.copy(position).addScaledVector(direction, _random(0.0, 0.8)),
+        velocity: _velocity.copy(direction).multiplyScalar(_random(10, 20)).add(spread),
+        life: _random(0.22, 0.58),
+        size: _random(0.05, 0.13),
         gravity: 8.5,
-        drag: 0.8,
+        drag: 0.75,
         color: 0xffc06b,
         opacity: 1,
       });
     }
 
-    shockwaves.spawn(position, direction, 1.35, 0.18);
-    lights.pulse(position, 55, 36, 0.095, 0xffb36a);
-
-    if (position.y < 3.2) {
-      const ground = _position.set(position.x, position.y - 1.35, position.z);
-      shockwaves.spawn(ground, UP, 2.0, 0.35);
-    }
+    shockwaves.spawn(position, direction, 2.3, 0.32);
+    shockwaves.spawn(_position.set(groundX, groundY, groundZ), UP, 3.4, 0.45);
+    lights.pulse(position, 105, 50, 0.16, 0xffb36a);
   };
 
   const emitImpact = (position, normal, kind, scale = 1) => {
@@ -603,6 +657,24 @@ export function createFx(scene, renderer) {
       scorch.add(_position.copy(position).addScaledVector(normal, 0.035), normal, Math.random() * Math.PI * 2, 2.1 * scale, 2.1 * scale);
     }
   };
+
+  // Keep the transient shader materials in the render graph from the first
+  // frame so the first trigger pull does not compile them on the main thread.
+  for (const item of flashes.items) {
+    item.sprite.visible = true;
+    item.sprite.material.opacity = 0;
+    item.sprite.position.set(0, -100, 0);
+  }
+  for (const item of shockwaves.items) {
+    item.mesh.visible = true;
+    item.mesh.material.opacity = 0;
+    item.mesh.position.set(0, -100, 0);
+  }
+  for (const item of lasers.items) {
+    item.line.visible = true;
+    item.line.material.opacity = 0;
+    item.line.position.set(0, -100, 0);
+  }
 
   return {
     resize,
