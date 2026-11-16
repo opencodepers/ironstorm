@@ -141,6 +141,7 @@ const pointer = {
   ndc: new THREE.Vector2(0, 0.05),
   inside: false,
   dragging: false,
+  dirty: true,
   lastX: 0,
   lastY: 0,
 };
@@ -178,6 +179,15 @@ const clock = new THREE.Clock();
 const raycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const aimPoint = new THREE.Vector3();
+let aimSolveCooldown = 0;
+let aimHasSolution = false;
+let lastImpactX = Infinity;
+let lastImpactY = Infinity;
+let lastImpactLabel = '';
+let lastImpactOffscreen = null;
+let lastSunX = Infinity;
+let lastSunY = Infinity;
+let lastSunZ = Infinity;
 const reticleMuzzle = new THREE.Vector3();
 const reticleDirection = new THREE.Vector3();
 const reticleVelocity = new THREE.Vector3();
@@ -383,7 +393,9 @@ function makeContactShadow() {
 function buildScene() {
   renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    // The composer owns 2x MSAA render targets; a multisampled default
+    // framebuffer is redundant for this full-screen post pipeline.
+    antialias: false,
     powerPreference: 'high-performance',
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
@@ -606,6 +618,7 @@ async function loadVehicle() {
   tank.vy = 0;
   applyVisuals();
   updateCamera(1, true);
+  prewarmShotAssets();
   updateAmmoUi();
   setLoad(1, 'GUNNERY RANGE READY');
   app.ready = true;
@@ -647,6 +660,11 @@ function resetTank(snapCamera = false) {
   shake.fov = 0;
   gun.lasedRange = 0;
   gun.lasedTimer = 0;
+  aimHasSolution = false;
+  pointer.dirty = true;
+  lastSunX = Infinity;
+  lastSunY = Infinity;
+  lastSunZ = Infinity;
   trackDistance = 0;
   clearProjectiles();
   if (tankRoot) {
@@ -816,40 +834,47 @@ function intersectHeightfield(origin, direction, out) {
 
 function updateAim(dt) {
   if (!turretPivot || !barrelPivot) return;
-  raycaster.setFromCamera(pointer.ndc, aimCamera);
+  aimSolveCooldown -= dt;
+  if (!aimHasSolution || pointer.dirty || aimSolveCooldown <= 0) {
+    raycaster.setFromCamera(pointer.ndc, aimCamera);
 
-  // Resolve the point under the mouse against targets, rocks and the actual
-  // heightfield. The old horizontal-plane fallback made ground shots aim at
-  // empty air whenever the cursor was over a slope.
-  let hasAimPoint = false;
-  let nearest = Infinity;
-  if (range) {
-    const targetHits = raycaster.intersectObjects(range.colliders, false);
-    for (const hit of targetHits) {
-      const target = hit.object.userData.target;
-      if (!target || !target.alive || hit.distance >= nearest) continue;
-      aimPoint.copy(hit.point);
-      nearest = hit.distance;
+    // Resolve the point under the mouse against targets, rocks and the actual
+    // heightfield. The old horizontal-plane fallback made ground shots aim at
+    // empty air whenever the cursor was over a slope.
+    let hasAimPoint = false;
+    let nearest = Infinity;
+    if (range) {
+      const targetHits = raycaster.intersectObjects(range.colliders, false);
+      for (const hit of targetHits) {
+        const target = hit.object.userData.target;
+        if (!target || !target.alive || hit.distance >= nearest) continue;
+        aimPoint.copy(hit.point);
+        nearest = hit.distance;
+        hasAimPoint = true;
+      }
+    }
+    if (terrain?.rocks) {
+      const rockHits = raycaster.intersectObject(terrain.rocks, false);
+      if (rockHits.length && rockHits[0].distance < nearest) {
+        aimPoint.copy(rockHits[0].point);
+        nearest = rockHits[0].distance;
+        hasAimPoint = true;
+      }
+    }
+    if (!hasAimPoint && intersectHeightfield(raycaster.ray.origin, raycaster.ray.direction, aimPoint)) {
       hasAimPoint = true;
     }
-  }
-  if (terrain?.rocks) {
-    const rockHits = raycaster.intersectObject(terrain.rocks, false);
-    if (rockHits.length && rockHits[0].distance < nearest) {
-      aimPoint.copy(rockHits[0].point);
-      nearest = rockHits[0].distance;
-      hasAimPoint = true;
+    if (!hasAimPoint) {
+      aimPlane.constant = -(tank.y + 1.45);
+      hasAimPoint = Boolean(raycaster.ray.intersectPlane(aimPlane, aimPoint));
     }
-  }
-  if (!hasAimPoint && intersectHeightfield(raycaster.ray.origin, raycaster.ray.direction, aimPoint)) {
-    hasAimPoint = true;
-  }
-  if (!hasAimPoint) {
-    aimPlane.constant = -(tank.y + 1.45);
-    hasAimPoint = Boolean(raycaster.ray.intersectPlane(aimPlane, aimPoint));
-  }
-  if (!hasAimPoint) {
-    aimPoint.copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, 600);
+    if (!hasAimPoint) {
+      aimPoint.copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, 600);
+    }
+
+    aimHasSolution = true;
+    pointer.dirty = false;
+    aimSolveCooldown = 1 / 30;
   }
 
   let dx = aimPoint.x - tank.x;
@@ -925,11 +950,21 @@ function updateReticles() {
   const onScreen = reticleProjection.z > -1 && reticleProjection.z < 1
     && x > -40 && x < window.innerWidth + 40
     && y > -40 && y < window.innerHeight + 40;
-  ui.impactReticle.classList.toggle('is-offscreen', !onScreen);
-  if (onScreen) ui.impactReticle.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  if (lastImpactOffscreen !== !onScreen) {
+    lastImpactOffscreen = !onScreen;
+    ui.impactReticle.classList.toggle('is-offscreen', !onScreen);
+  }
+  if (onScreen && (lastImpactOffscreen || Math.abs(x - lastImpactX) > 0.25 || Math.abs(y - lastImpactY) > 0.25)) {
+    lastImpactX = x;
+    lastImpactY = y;
+    ui.impactReticle.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+  }
   if (ui.impactReadout) {
     const label = `${Math.round(distance)} M`;
-    if (ui.impactReadout.textContent !== label) ui.impactReadout.textContent = label;
+    if (lastImpactLabel !== label) {
+      lastImpactLabel = label;
+      ui.impactReadout.textContent = label;
+    }
   }
 }
 
@@ -1009,11 +1044,16 @@ function updateCamera(dt, snap = false) {
 
 function updateSun() {
   if (!sunLight) return;
-  sunLight.position.set(
-    tank.x + sunDirection.x * 100,
-    tank.y + sunDirection.y * 100,
-    tank.z + sunDirection.z * 100,
-  );
+  const nextX = tank.x + sunDirection.x * 100;
+  const nextY = tank.y + sunDirection.y * 100;
+  const nextZ = tank.z + sunDirection.z * 100;
+  if (Math.abs(nextX - lastSunX) < 0.02
+    && Math.abs(nextY - lastSunY) < 0.02
+    && Math.abs(nextZ - lastSunZ) < 0.02) return;
+  lastSunX = nextX;
+  lastSunY = nextY;
+  lastSunZ = nextZ;
+  sunLight.position.set(nextX, nextY, nextZ);
   sunLight.target.position.set(tank.x, tank.y, tank.z);
   sunLight.target.updateMatrixWorld();
 }
@@ -1033,6 +1073,22 @@ function getTracerAssets(spec) {
     tracerAssets.set(spec.id, { coreGeometry, trailGeometry, material });
   }
   return tracerAssets.get(spec.id);
+}
+
+function prewarmShotAssets() {
+  // Compile the tracer material while the loading screen is still up. It is
+  // first created on firing, and compiling it then caused a visible hitch.
+  const warm = [];
+  for (const spec of SHELLS) {
+    const assets = getTracerAssets(spec);
+    const sample = new THREE.Mesh(assets.trailGeometry, assets.material);
+    sample.position.set(0, -1000, 0);
+    sample.frustumCulled = false;
+    scene.add(sample);
+    warm.push(sample);
+  }
+  renderer.compile(scene, camera);
+  for (const sample of warm) scene.remove(sample);
 }
 
 function makeTracer(spec) {
@@ -1447,6 +1503,7 @@ function bindInput() {
 
   canvas.addEventListener('pointerenter', () => {
     pointer.inside = true;
+    pointer.dirty = true;
     document.body.classList.add('is-pointing');
   });
   canvas.addEventListener('pointerleave', () => {
@@ -1463,6 +1520,7 @@ function bindInput() {
     if (ui.reticle) {
       ui.reticle.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
     }
+    pointer.dirty = true;
     pointer.inside = true;
     document.body.classList.add('is-pointing');
 

@@ -2,11 +2,14 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-const GradeShader = {
+// Tone mapping and color conversion are folded into the grade pass. This keeps
+// the same visual result while removing a full-screen copy from every frame.
+const FinalShader = {
+  name: 'FinalGradeShader',
   uniforms: {
     tDiffuse: { value: null },
+    toneMappingExposure: { value: 0.8 },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
     uVignette: { value: 0.5 },
@@ -22,6 +25,8 @@ const GradeShader = {
     }
   `,
   fragmentShader: /* glsl */ `
+    precision highp float;
+
     uniform sampler2D tDiffuse;
     uniform float uTime;
     uniform vec2 uResolution;
@@ -42,11 +47,12 @@ const GradeShader = {
       vec2 direction = centered / max(radius, 0.00001);
       float aberration = radius * radius * 0.0015;
 
-      vec3 color;
-      color.r = texture2D(tDiffuse, uv + direction * aberration).r;
-      color.g = texture2D(tDiffuse, uv).g;
-      color.b = texture2D(tDiffuse, uv - direction * aberration).b;
+      vec3 linear;
+      linear.r = texture2D(tDiffuse, uv + direction * aberration).r;
+      linear.g = texture2D(tDiffuse, uv).g;
+      linear.b = texture2D(tDiffuse, uv - direction * aberration).b;
 
+      vec3 color = sRGBTransferOETF(vec4(ACESFilmicToneMapping(linear), 1.0)).rgb;
       color = (color - 0.5) * 1.045 + 0.5;
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
       color = mix(vec3(luma), color, 1.08);
@@ -73,11 +79,9 @@ export function createPost(renderer, scene, camera) {
   if (composer.renderTarget2) composer.renderTarget2.samples = 2;
 
   const renderPass = new RenderPass(scene, camera);
-  const output = new OutputPass();
-  const grade = new ShaderPass(GradeShader);
+  const grade = new ShaderPass(FinalShader);
 
   composer.addPass(renderPass);
-  composer.addPass(output);
   composer.addPass(grade);
 
   const size = new THREE.Vector2();
@@ -96,6 +100,7 @@ export function createPost(renderer, scene, camera) {
     grade,
     render(dt) {
       grade.uniforms.uTime.value += dt;
+      grade.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
       if (grade.uniforms.uFlash.value > 0) {
         grade.uniforms.uFlash.value = Math.max(0, grade.uniforms.uFlash.value - dt * 6.5);
       }
