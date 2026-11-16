@@ -318,6 +318,7 @@ class Shockwaves {
       });
       const mesh = new THREE.Mesh(new THREE.RingGeometry(0.82, 1, 48), material);
       mesh.visible = false;
+      mesh.frustumCulled = false;
       mesh.renderOrder = 4;
       scene.add(mesh);
       this.items.push({ mesh, life: 0, maxLife: 0, radius: 1 });
@@ -366,6 +367,7 @@ class FlashSprites {
       });
       const sprite = new THREE.Sprite(material);
       sprite.visible = false;
+      sprite.frustumCulled = false;
       sprite.renderOrder = 5;
       scene.add(sprite);
       this.items.push({ sprite, life: 0, maxLife: 0, baseScale: 1, baseOpacity: 1 });
@@ -417,6 +419,7 @@ class LaserBeams {
       });
       const line = new THREE.Line(geometry, material);
       line.visible = false;
+      line.frustumCulled = false;
       line.renderOrder = 6;
       scene.add(line);
       this.items.push({ line, life: 0, maxLife: 0 });
@@ -458,7 +461,9 @@ class PulseLights {
     this.items = [];
     for (let i = 0; i < count; i++) {
       const light = new THREE.PointLight(0xffa45e, 0, 34, 2);
-      light.visible = false;
+      // Keep the pool visible at zero intensity. Toggling a light's visibility
+      // changes the material shader variant and forces a full-scene recompile.
+      light.visible = true;
       scene.add(light);
       this.items.push({ light, life: 0, maxLife: 0, intensity: 0 });
     }
@@ -469,7 +474,6 @@ class PulseLights {
     item.life = life;
     item.maxLife = life;
     item.intensity = intensity;
-    item.light.visible = true;
     item.light.position.copy(position);
     item.light.color.set(color);
     item.light.intensity = intensity;
@@ -481,7 +485,7 @@ class PulseLights {
       if (item.life <= 0) continue;
       item.life -= dt;
       if (item.life <= 0) {
-        item.light.visible = false;
+        item.light.intensity = 0;
         continue;
       }
       const t = item.life / item.maxLife;
@@ -684,6 +688,21 @@ export function createFx(scene, renderer) {
       lasers.update(dt);
       flashes.update(dt);
       lights.update(dt);
+    },
+    prewarm() {
+      // Decals are hidden until they are first used. Show them for one render
+      // so their instanced material is compiled behind the loader.
+      const layers = [scorch, tracks];
+      for (const layer of layers) {
+        layer.mesh.visible = true;
+        layer.mesh.position.set(0, -1000, 0);
+      }
+      return () => {
+        for (const layer of layers) {
+          layer.mesh.visible = false;
+          layer.mesh.position.set(0, 0, 0);
+        }
+      };
     },
     muzzle: emitMuzzle,
     impact: emitImpact,

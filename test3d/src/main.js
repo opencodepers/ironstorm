@@ -478,6 +478,9 @@ function buildScene() {
   post = createPost(renderer, scene, camera);
   fx = createFx(scene, renderer);
   audio = createAudio();
+  // Pay the AudioContext setup cost behind the loader instead of on the first
+  // trigger pull. It stays suspended until the user's click resumes it.
+  audio.unlock();
 
   resetTank(true);
   updateCamera(1, true);
@@ -1076,19 +1079,26 @@ function getTracerAssets(spec) {
 }
 
 function prewarmShotAssets() {
-  // Compile the tracer material while the loading screen is still up. It is
-  // first created on firing, and compiling it then caused a visible hitch.
+  // Build and draw the exact first-shot effect set once behind the loader. A
+  // dry compile misses the tracer, flash and decal variants in this renderer,
+  // and they otherwise compile on the first trigger pull.
   const warm = [];
   for (const spec of SHELLS) {
-    const assets = getTracerAssets(spec);
-    const sample = new THREE.Mesh(assets.trailGeometry, assets.material);
-    sample.position.set(0, -1000, 0);
-    sample.frustumCulled = false;
-    scene.add(sample);
-    warm.push(sample);
+    const tracer = makeTracer(spec);
+    tracer.group.position.set(0, -1000, 0);
+    tracer.core.frustumCulled = false;
+    tracer.trail.frustumCulled = false;
+    warm.push(tracer);
   }
-  renderer.compile(scene, camera);
-  for (const sample of warm) scene.remove(sample);
+  const restoreDecals = fx.prewarm();
+  const warmPosition = new THREE.Vector3(0, -1000, 0);
+  fx.muzzle(warmPosition, up, warmPosition);
+  // Render through the same composer path used in gameplay, so the first
+  // shot does not create a new pipeline state at the trigger pull.
+  post.render(0.016);
+  for (const tracer of warm) scene.remove(tracer.group);
+  restoreDecals();
+  fx.update(10);
 }
 
 function makeTracer(spec) {
