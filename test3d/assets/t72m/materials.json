@@ -1,0 +1,108 @@
+{
+  "source": "T72M tank by 18095010881, CGTrader item 5381636",
+  "modelWidthM": 3.6,
+  "pivots": {
+    "turret": [
+      0,
+      1.471,
+      0
+    ],
+    "barrel": [
+      0,
+      1.841,
+      -0.86
+    ]
+  },
+  "materials": {
+    "履带": {
+      "label": "Tracks",
+      "albedo": "tex/tracks_albedo.webp",
+      "normal": "tex/tracks_normal.webp",
+      "orm": "tex/tracks_orm.webp"
+    },
+    "扣子": {
+      "label": "Fasteners",
+      "albedo": "tex/fasteners_albedo.webp",
+      "normal": "tex/fasteners_normal.webp",
+      "orm": "tex/fasteners_orm.webp"
+    },
+    "机枪": {
+      "label": "Machine gun",
+      "albedo": "tex/machinegun_albedo.webp",
+      "normal": "tex/machinegun_normal.webp",
+      "orm": "tex/machinegun_orm.webp"
+    },
+    "炮塔": {
+      "label": "Turret",
+      "albedo": "tex/turret_albedo.webp",
+      "normal": "tex/turret_normal.webp",
+      "orm": "tex/turret_orm.webp"
+    },
+    "炮塔外部": {
+      "label": "Turret exterior",
+      "albedo": "tex/turret-ext_albedo.webp",
+      "normal": "tex/turret-ext_normal.webp",
+      "orm": "tex/turret-ext_orm.webp"
+    },
+    "炮管": {
+      "label": "Gun barrel",
+      "albedo": "tex/barrel_albedo.webp",
+      "normal": "tex/barrel_normal.webp",
+      "orm": "tex/barrel_orm.webp"
+    },
+    "螺丝": {
+      "label": "Screws",
+      "albedo": "tex/screws_albedo.webp",
+      "normal": "tex/screws_normal.webp",
+      "orm": "tex/screws_orm.webp"
+    },
+    "车尾": {
+      "label": "Rear plate",
+      "albedo": "tex/rear_albedo.webp",
+      "normal": "tex/rear_normal.webp",
+      "orm": "tex/rear_orm.webp"
+    },
+    "车灯": {
+      "label": "Lights",
+      "albedo": "tex/lights_albedo.webp",
+      "normal": "tex/lights_normal.webp",
+      "orm": "tex/lights_orm.webp"
+    },
+    "车身": {
+      "label": "Hull",
+      "albedo": "tex/hull_albedo.webp",
+      "normal": "tex/hull_normal.webp",
+      "orm": "tex/hull_orm.webp"
+    },
+    "车身右侧": {
+      "label": "Hull right",
+      "albedo": "tex/hull-right_albedo.webp",
+      "normal": "tex/hull-right_normal.webp",
+      "orm": "tex/hull-right_orm.webp"
+    },
+    "车身左侧": {
+      "label": "Hull left",
+      "albedo": "tex/hull-left_albedo.webp",
+      "normal": "tex/hull-left_normal.webp",
+      "orm": "tex/hull-left_orm.webp"
+    },
+    "车身底部": {
+      "label": "Hull floor",
+      "albedo": "tex/hull-bottom_albedo.webp",
+      "normal": "tex/hull-bottom_normal.webp",
+      "orm": "tex/hull-bottom_orm.webp"
+    },
+    "车顶": {
+      "label": "Roof",
+      "albedo": "tex/roof_albedo.webp",
+      "normal": "tex/roof_normal.webp",
+      "orm": "tex/roof_orm.webp"
+    },
+    "轮子": {
+      "label": "Road wheels",
+      "albedo": "tex/wheels_albedo.webp",
+      "normal": "tex/wheels_normal.webp",
+      "orm": "tex/wheels_orm.webp"
+    }
+  }
+}

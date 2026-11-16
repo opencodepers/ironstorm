@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10130e">
+  <title>T-72M Mobility Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2310130e'/%3E%3Cpath d='M8 37h48v11H8z' fill='%23d36f3b'/%3E%3Ccircle cx='19' cy='51' r='6' fill='%23edf0e3'/%3E%3Ccircle cx='45' cy='51' r='6' fill='%23edf0e3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
+      }
+    }
+  </script>
+</head>
+<body class="is-loading">
+  <canvas id="scene" aria-label="T-72M mobility test range"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+  <div class="flash" id="flash" aria-hidden="true"></div>
+  <div class="reticle" id="reticle" aria-hidden="true">
+    <span class="reticle__ring"></span>
+    <span class="reticle__cross"></span>
+    <span class="reticle__range" id="range-readout">--- M</span>
+    <span class="reticle__ammo" id="reticle-ammo">APFSDS</span>
+  </div>
+  <div class="hitmarker" id="hitmarker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div class="popups" id="popups" aria-hidden="true"></div>
+
+  <div class="hud">
+    <header class="top">
+      <div class="brand">
+        <span class="eyebrow">IRONSTORM // GUNNERY LAB 02</span>
+        <h1>T-72M</h1>
+        <p>LIVE BALLISTIC TEST RANGE</p>
+      </div>
+      <div class="telemetry">
+        <div><span>FRAME</span><b id="fps">--</b></div>
+        <div><span>GRID</span><b id="grid">X 000 · Z 000</b></div>
+        <div><span>ASSET</span><b>PBR / LIVE</b></div>
+      </div>
+    </header>
+
+    <section class="gunnery" aria-label="Gunnery score and ammunition">
+      <div class="gunnery__score">
+        <span>SCORE</span>
+        <b id="score">000000</b>
+        <em id="best">BEST 000000</em>
+      </div>
+      <div class="gunnery__combo">
+        <span>COMBO</span>
+        <b id="combo">x1.00</b>
+      </div>
+      <div class="gunnery__ammo">
+        <span>AMMUNITION</span>
+        <div class="ammo-chips">
+          <i data-shell="APFSDS">1 · APFSDS</i>
+          <i data-shell="HEAT">2 · HEAT</i>
+          <i data-shell="HE">3 · HE</i>
+        </div>
+      </div>
+      <div class="gunnery__reload">
+        <span id="reload-label">READY</span>
+        <div><i id="reload-bar"></i></div>
+      </div>
+    </section>
+
+    <section class="drive" aria-label="Vehicle speed">
+      <span class="label">GROUND SPEED</span>
+      <div class="drive__readout"><b id="speed">000</b><small>KM/H</small></div>
+      <div class="drive__meta">
+        <strong id="gear">N</strong>
+        <span id="drive-state">IDLE</span>
+      </div>
+      <div class="throttle" aria-hidden="true"><i id="throttle"></i></div>
+    </section>
+
+    <section class="aim" aria-label="Gunnery telemetry">
+      <div><span>TRAVERSE</span><b id="turret">000°</b></div>
+      <div><span>GUN</span><b id="elevation">+0.0°</b></div>
+      <div><span>GRADE</span><b id="grade">0.0%</b></div>
+    </section>
+
+    <div class="notice" id="notice" role="status"></div>
+    <div class="feed" id="feed" aria-live="polite"></div>
+
+    <footer class="controls">
+      <span><kbd>W</kbd><kbd>S</kbd> THROTTLE</span>
+      <span><kbd>A</kbd><kbd>D</kbd> STEER</span>
+      <span><kbd>SHIFT</kbd> BOOST</span>
+      <span><kbd>SPACE</kbd> BRAKE</span>
+      <span><kbd>LMB</kbd> FIRE</span>
+      <span><kbd>F</kbd> LASE</span>
+      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> SHELL</span>
+      <span><kbd>MOUSE</kbd> TURRET</span>
+      <span><kbd>RMB</kbd> ORBIT</span>
+      <span><kbd>M</kbd> AUDIO</span>
+      <span><kbd>R</kbd> RESET</span>
+    </footer>
+
+    <div class="credit">T-72M BY 18095010881 · CGTRADER · ROYALTY FREE</div>
+  </div>
+
+  <section class="loader" id="loader">
+    <div class="loader__inner">
+      <span class="eyebrow">IRONSTORM RESEARCH DIVISION</span>
+      <h2>T-72M</h2>
+      <p>MOBILITY / SUSPENSION / GUNNERY</p>
+      <div class="loader__bar"><i id="loader-bar"></i></div>
+      <div class="loader__row">
+        <span id="loader-status">INITIALIZING RANGE</span>
+        <span id="loader-percent">0%</span>
+      </div>
+      <small>REAL T-72M · LOD-OPTIMIZED PBR · BALLISTIC FIRE CONTROL · LIVE TARGETS</small>
+    </div>
+  </section>
+
+  <section class="error" id="error" hidden>
+    <div>
+      <span class="eyebrow">TEST RANGE UNAVAILABLE</span>
+      <h2>ASSET FAULT</h2>
+      <pre id="error-text"></pre>
+      <p>Run this page from <code>tank-lab/server.mjs</code>, not by opening the HTML file directly.</p>
+    </div>
+  </section>
+
+  <noscript>This test range requires JavaScript and WebGL.</noscript>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
