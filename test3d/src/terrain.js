@@ -81,8 +81,8 @@ function canvasTexture(canvas, colorSpace = THREE.SRGBColorSpace) {
   return texture;
 }
 
-function makeGroundTextures() {
-  const size = 512;
+function makeGroundTextures(highDetail = false) {
+  const size = highDetail ? 1024 : 512;
   const heights = new Float32Array(size * size);
 
   for (let y = 0; y < size; y++) {
@@ -219,8 +219,7 @@ function seededRandom(seed = 1731) {
   };
 }
 
-function makeGrassTexture() {
-  const size = 128;
+function makeGrassTexture(size = 128) {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -269,8 +268,9 @@ function makeGrassGeometry() {
 }
 
 export function createTerrain({ lowPower = false } = {}) {
+  const highQuality = !lowPower;
   const size = RANGE_SIZE;
-  const segments = 300;
+  const segments = lowPower ? 240 : 340;
   const positions = new Float32Array((segments + 1) * (segments + 1) * 3);
   const indices = [];
   let cursor = 0;
@@ -331,7 +331,7 @@ export function createTerrain({ lowPower = false } = {}) {
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geometry.computeBoundingSphere();
 
-  const textures = makeGroundTextures();
+  const textures = makeGroundTextures(highQuality);
   const material = new THREE.MeshStandardMaterial({
     vertexColors: true,
     map: textures.map,
@@ -408,7 +408,7 @@ export function createTerrain({ lowPower = false } = {}) {
 
   const grassGeometry = makeGrassGeometry();
   const grassMaterial = new THREE.MeshStandardMaterial({
-    map: makeGrassTexture(),
+    map: makeGrassTexture(highQuality ? 256 : 128),
     color: 0xffffff,
     alphaTest: 0.34,
     side: THREE.DoubleSide,
@@ -416,7 +416,7 @@ export function createTerrain({ lowPower = false } = {}) {
     metalness: 0,
     vertexColors: true,
   });
-  const grassCount = lowPower ? 1400 : 6500;
+  const grassCount = lowPower ? 1400 : 8000;
   const grassMesh = new THREE.InstancedMesh(grassGeometry, grassMaterial, grassCount);
   const grassColor = new THREE.Color();
   let placed = 0;
@@ -449,7 +449,7 @@ export function createTerrain({ lowPower = false } = {}) {
     metalness: 0.02,
     vertexColors: true,
   });
-  const rockCount = 260;
+  const rockCount = lowPower ? 140 : 420;
   const rocks = new THREE.InstancedMesh(rockGeometry, rockMaterial, rockCount);
   const rockColor = new THREE.Color();
   placed = 0;

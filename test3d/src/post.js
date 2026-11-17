@@ -180,14 +180,15 @@ const FinalShader = {
   `,
 };
 
-export function createPost(renderer, scene, camera) {
+export function createPost(renderer, scene, camera, { highQuality = true } = {}) {
   const composer = new EffectComposer(renderer);
   let renderScale = 1;
   composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5) * renderScale);
   composer.setSize(window.innerWidth, window.innerHeight);
 
-  if (composer.renderTarget1) composer.renderTarget1.samples = 2;
-  if (composer.renderTarget2) composer.renderTarget2.samples = 2;
+  const samples = highQuality ? Math.min(4, renderer.capabilities.maxSamples || 4) : 0;
+  if (composer.renderTarget1) composer.renderTarget1.samples = samples;
+  if (composer.renderTarget2) composer.renderTarget2.samples = samples;
 
   const renderPass = new RenderPass(scene, camera);
   const grade = new ShaderPass(FinalShader);

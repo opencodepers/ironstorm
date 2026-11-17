@@ -618,7 +618,7 @@ function buildScene() {
   sunLight.color.set(0xffd8ad);
   sunLight.intensity = 2.9;
   sunLight.castShadow = !lowPower;
-  sunLight.shadow.mapSize.set(lowPower ? 1024 : 2048, lowPower ? 1024 : 2048);
+  sunLight.shadow.mapSize.set(lowPower ? 1024 : 3072, lowPower ? 1024 : 3072);
   sunLight.shadow.camera.near = 1;
   sunLight.shadow.camera.far = 280;
   sunLight.shadow.camera.left = -68;
@@ -627,6 +627,7 @@ function buildScene() {
   sunLight.shadow.camera.bottom = -68;
   sunLight.shadow.bias = -0.0003;
   sunLight.shadow.normalBias = 0.028;
+  sunLight.shadow.radius = lowPower ? 1 : 2.4;
   scene.add(sunLight);
   scene.add(sunLight.target);
 
@@ -654,7 +655,7 @@ function buildScene() {
   contactShadow = makeContactShadow();
   scene.add(contactShadow);
 
-  post = createPost(renderer, scene, camera);
+  post = createPost(renderer, scene, camera, { highQuality: !lowPower });
   shotCamera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 2500);
   post.setShotCamera(shotCamera, false);
   post.setRenderScale(renderScale);
@@ -943,7 +944,11 @@ function applyQualityMode() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowPower;
-  if (sunLight) sunLight.castShadow = !lowPower;
+  if (sunLight) {
+    sunLight.castShadow = !lowPower;
+    sunLight.shadow.mapSize.set(lowPower ? 1024 : 3072, lowPower ? 1024 : 3072);
+    sunLight.shadow.radius = lowPower ? 1 : 2.4;
+  }
   renderScale = 1;
   post?.setRenderScale(renderScale);
   document.body.classList.toggle('low-power', lowPower);
