@@ -778,11 +778,15 @@ export function createFx(scene, renderer) {
         layer.mesh.visible = true;
         layer.mesh.position.set(0, -1000, 0);
       }
+      const warmCasing = casings[0];
+      warmCasing.mesh.visible = true;
+      warmCasing.mesh.position.set(0, -1000, 0);
       return () => {
         for (const layer of layers) {
           layer.mesh.visible = false;
           layer.mesh.position.set(0, 0, 0);
         }
+        warmCasing.mesh.visible = false;
       };
     },
     muzzle: emitMuzzle,

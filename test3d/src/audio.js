@@ -18,6 +18,23 @@ export function createAudio() {
   let duck = 0;
   let lastVoice = 0;
   let lastWarning = 0;
+  let speechPrimed = false;
+
+  const primeSpeech = () => {
+    if (speechPrimed || !('speechSynthesis' in window)) return;
+    speechPrimed = true;
+    try {
+      // Voice enumeration can initialize the platform speech engine. Doing
+      // that behind the loader avoids a one-second hitch on the first crew call.
+      window.speechSynthesis.getVoices();
+      const utterance = new SpeechSynthesisUtterance(' ');
+      utterance.volume = 0;
+      utterance.rate = 1.5;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // Speech is an optional layer; radio clicks remain available.
+    }
+  };
 
   const ensure = () => {
     if (!context) {
@@ -90,6 +107,7 @@ export function createAudio() {
       engineFilter.connect(engineGain);
       engineGain.connect(ambience);
       engineOscillator.start();
+      primeSpeech();
     }
     if (context.state === 'suspended') context.resume().catch(() => {});
     return true;
@@ -160,8 +178,15 @@ export function createAudio() {
       utterance.pitch = 0.82 + Math.random() * 0.14;
       utterance.volume = 0.34;
       utterance.lang = 'en-US';
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
+      // Queue after the current frame. Cancelling on every call forces the
+      // platform voice engine to synchronize and can stall the render loop.
+      window.setTimeout(() => {
+        try {
+          window.speechSynthesis.speak(utterance);
+        } catch {
+          // No speech service on this host.
+        }
+      }, 0);
     } catch {
       // Speech is optional; the radio click still gives the crew cue.
     }

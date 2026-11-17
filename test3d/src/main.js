@@ -1347,6 +1347,9 @@ function prewarmShotAssets() {
   const restoreDecals = fx.prewarm();
   const warmPosition = new THREE.Vector3(0, -1000, 0);
   fx.muzzle(warmPosition, up, warmPosition);
+  fx.casing(warmPosition, up);
+  fx.impact(warmPosition, up, 'ground', 1);
+  fx.explosion(warmPosition, 1);
   // Render through the same composer path used in gameplay, so the first
   // shot does not create a new pipeline state at the trigger pull.
   post.render(0.016);
