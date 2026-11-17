@@ -105,6 +105,47 @@ function makeContactShadow(width, length) {
   return mesh;
 }
 
+function makeTargetLodProxy(hostile = false) {
+  const group = new THREE.Group();
+  group.name = 'target-lod-proxy';
+  const olive = new THREE.MeshStandardMaterial({
+    color: hostile ? 0x30382a : 0x3d4436,
+    roughness: 0.86,
+    metalness: 0.2,
+  });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x22261f, roughness: 0.9, metalness: 0.3 });
+  const accent = new THREE.MeshStandardMaterial({ color: 0xc65b2f, roughness: 0.65, metalness: 0.1 });
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(3.35, 1.05, 7), olive);
+  hull.position.y = 0.95;
+  group.add(hull);
+  const glacis = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.45, 1.5), olive);
+  glacis.position.set(0, 1.15, -3.2);
+  group.add(glacis);
+  for (const side of [-1, 1]) {
+    const track = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 7.1), dark);
+    track.position.set(side * 1.42, 0.45, 0);
+    group.add(track);
+  }
+  const turret = new THREE.Mesh(new THREE.CylinderGeometry(1.18, 1.38, 0.66, 10), olive);
+  turret.position.set(0, 1.68, 0.12);
+  group.add(turret);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 4.1, 7), dark);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.position.set(0, 1.78, -2.45);
+  group.add(barrel);
+  for (const side of [-1, 1]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.3, 0.95), accent);
+    panel.position.set(side * 1.1, 1.78, 0.55);
+    group.add(panel);
+  }
+  group.traverse((child) => {
+    if (!child.isMesh) return;
+    child.castShadow = false;
+    child.receiveShadow = true;
+  });
+  return group;
+}
+
 function makeFramePost(material, x, z = 0) {
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.11, 2.8, 8), material);
   post.position.set(x, 1.4, z);
@@ -165,6 +206,7 @@ class RangeTarget {
     reaction = 2.8,
     damage = 55,
     projectileSpeed = 760,
+    lod = null,
   }) {
     this.name = name;
     this.kind = kind;
@@ -214,6 +256,7 @@ class RangeTarget {
     this.colliderGroup = group;
     this.visibilityTimer = Math.random() * 0.2;
     this.contactShadow = null;
+    this.lod = lod;
     group.traverse((child) => {
       if (child.isMesh && child.material?.map === contactShadowTexture) this.contactShadow = child;
     });
@@ -241,6 +284,7 @@ class RangeTarget {
       fireTimer: this.fireTimer,
       modules: { ...this.modules },
       velocity: [this.velocity.x, this.velocity.y, this.velocity.z],
+      lodLevel: this.lod?.getCurrentLevel?.() ?? null,
     };
   }
 
@@ -714,7 +758,10 @@ function createTargetTank(root, targets, colliders, { vehicleScene, x, z, distan
     child.castShadow = false;
     child.receiveShadow = true;
   });
-  group.add(clone);
+  const lod = new THREE.LOD();
+  lod.addLevel(clone, 0);
+  lod.addLevel(makeTargetLodProxy(hostile), 95, 0.08);
+  group.add(lod);
   group.add(makeContactShadow(7.8, 11.5));
   const turret = clone.getObjectByName('turret_pivot');
   const panelMaterial = new THREE.MeshStandardMaterial({
@@ -773,6 +820,7 @@ function createTargetTank(root, targets, colliders, { vehicleScene, x, z, distan
     path: moving ? { type: 'advance', min: -9, max: 9, speed: 0.1 } : null,
     damage: 70,
     projectileSpeed: 850,
+    lod,
   });
   target.turretPivot = turret;
   addTarget(root, targets, colliders, target, null);

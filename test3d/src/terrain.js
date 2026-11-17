@@ -417,12 +417,19 @@ export function createTerrain({ lowPower = false } = {}) {
     vertexColors: true,
   });
   const grassCount = lowPower ? 1400 : 8000;
-  const grassMesh = new THREE.InstancedMesh(grassGeometry, grassMaterial, grassCount);
+  const grassSpan = 880;
+  // Split the lawn into spatial chunks on desktop. Three can then reject the
+  // chunks outside the view frustum instead of submitting all 8,000 blades.
+  // A chunk is also hidden once it is too distant to resolve, which removes
+  // the subpixel vegetation that aliases most on the horizon.
+  const grassChunksPerAxis = lowPower ? 1 : 6;
+  const grassChunkSpan = grassSpan / grassChunksPerAxis;
+  const grassBuckets = Array.from({ length: grassChunksPerAxis ** 2 }, () => []);
   const grassColor = new THREE.Color();
   let placed = 0;
   while (placed < grassCount) {
-    const x = (random() - 0.5) * 880;
-    const z = (random() - 0.5) * 880;
+    const x = (random() - 0.5) * grassSpan;
+    const z = (random() - 0.5) * grassSpan;
     if (Math.hypot(x, z) < 17) continue;
     if (Math.abs(x) < 18 && z < -30) continue;
     const width = 0.7 + random() * 1.6;
@@ -431,16 +438,31 @@ export function createTerrain({ lowPower = false } = {}) {
     dummy.rotation.set(0, random() * Math.PI, 0);
     dummy.scale.set(width, height, width);
     dummy.updateMatrix();
-    grassMesh.setMatrixAt(placed, dummy.matrix);
     grassColor.setHSL(0.16 + random() * 0.055, 0.16 + random() * 0.12, 0.48 + random() * 0.16);
-    grassMesh.setColorAt(placed, grassColor);
+    const cx = clamp(Math.floor((x + grassSpan * 0.5) / grassChunkSpan), 0, grassChunksPerAxis - 1);
+    const cz = clamp(Math.floor((z + grassSpan * 0.5) / grassChunkSpan), 0, grassChunksPerAxis - 1);
+    grassBuckets[cz * grassChunksPerAxis + cx].push({
+      matrix: dummy.matrix.clone(),
+      color: grassColor.clone(),
+    });
     placed++;
   }
-  grassMesh.instanceMatrix.needsUpdate = true;
-  if (grassMesh.instanceColor) grassMesh.instanceColor.needsUpdate = true;
-  grassMesh.computeBoundingSphere();
-  grassMesh.receiveShadow = true;
-  group.add(grassMesh);
+
+  const grassChunks = [];
+  for (const bucket of grassBuckets) {
+    if (!bucket.length) continue;
+    const mesh = new THREE.InstancedMesh(grassGeometry, grassMaterial, bucket.length);
+    for (let i = 0; i < bucket.length; i++) {
+      mesh.setMatrixAt(i, bucket[i].matrix);
+      mesh.setColorAt(i, bucket[i].color);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    grassChunks.push(mesh);
+  }
 
   const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
   const rockMaterial = new THREE.MeshStandardMaterial({
@@ -477,5 +499,15 @@ export function createTerrain({ lowPower = false } = {}) {
   rocks.receiveShadow = true;
   group.add(rocks);
 
-  return { group, ground, rocks, size, material };
+  const updateCulling = (cameraPosition) => {
+    if (!cameraPosition || lowPower) return;
+    const limit = 280;
+    for (const mesh of grassChunks) {
+      const sphere = mesh.boundingSphere;
+      if (!sphere) continue;
+      mesh.visible = cameraPosition.distanceTo(sphere.center) - sphere.radius < limit;
+    }
+  };
+
+  return { group, ground, rocks, grassChunks, size, material, updateCulling };
 }

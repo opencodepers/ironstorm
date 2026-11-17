@@ -2490,6 +2490,7 @@ function updateHud(dt) {
 
 let simAccumulator = 0;
 let adaptiveTimer = 0;
+let cullTimer = 0;
 let frameStart = 0;
 
 function simulate(dt) {
@@ -2557,6 +2558,11 @@ function animate() {
       updateReticles();
       updateShotCamera();
       updateAdaptiveResolution(dt);
+      cullTimer += dt;
+      if (cullTimer >= 0.25) {
+        cullTimer = 0;
+        terrain.updateCulling(camera.position);
+      }
     }
     updateHud(dt);
   }
