@@ -203,10 +203,14 @@ export function createAudio() {
       if (muted && 'speechSynthesis' in window) window.speechSynthesis.cancel();
       return muted;
     },
-    update({ speed = 0, moving = false, rpm = 0, rain = 0, wind = 0, buttoned = false, damage = 0, repairing = false, tempC = 18 } = {}) {
+    update({ speed = 0, moving = false, rpm = 0, engineOn = true, rain = 0, wind = 0, buttoned = false, damage = 0, repairing = false, tempC = 18 } = {}) {
       if (!context) return;
       const now = context.currentTime;
-      const targetEngine = moving ? Math.min(1, 0.24 + Math.abs(speed) * 0.045 + rpm * 0.2) : 0.16;
+      const targetEngine = !engineOn
+        ? 0
+        : moving
+          ? Math.min(1, 0.24 + Math.abs(speed) * 0.045 + rpm * 0.2)
+          : 0.16;
       engineLevel += (targetEngine - engineLevel) * 0.08;
       engineGain.gain.setTargetAtTime(engineLevel * 0.16, now, 0.12);
       engineOscillator.frequency.setTargetAtTime(28 + Math.abs(speed) * 3.8 + rpm * 34, now, 0.14);
@@ -259,6 +263,27 @@ export function createAudio() {
       click(0.02, 0.35, 1700);
       click(0.34, 0.48, 820);
       click(0.62, 0.24, 1200);
+    },
+    gearShift() {
+      if (!ensure()) return;
+      noise(0.1, 0.16, 'bandpass', 920, 510);
+      tone('triangle', 0.12, 0.08, 150, 88);
+    },
+    ignition(start) {
+      if (!ensure()) return;
+      if (start) {
+        noise(0.45, 0.34, 'bandpass', 420, 120);
+        tone('sawtooth', 0.7, 0.16, 26, 58);
+        tone('sine', 0.32, 0.12, 54, 36, 0.18);
+      } else {
+        noise(0.32, 0.2, 'lowpass', 900, 70);
+        tone('sine', 0.55, 0.18, 62, 20);
+      }
+    },
+    smoke() {
+      if (!ensure()) return;
+      noise(0.42, 0.42, 'highpass', 2600, 480);
+      noise(0.8, 0.2, 'lowpass', 720, 90, 0.08);
     },
     ready() {
       if (!ensure()) return;

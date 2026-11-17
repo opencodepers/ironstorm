@@ -497,14 +497,15 @@ class PulseLights {
   }
 }
 
-export function createFx(scene, renderer) {
+export function createFx(scene, renderer, { lowPower = false } = {}) {
+  const quality = lowPower ? 0.55 : 1;
   const soft = makeSoftTexture();
   const spark = makeSparkTexture();
-  const smoke = new ParticlePool(scene, { count: 420, texture: soft, blending: THREE.NormalBlending });
-  const dust = new ParticlePool(scene, { count: 520, texture: soft, blending: THREE.NormalBlending });
-  const sparks = new ParticlePool(scene, { count: 320, texture: spark, blending: THREE.AdditiveBlending });
-  const fire = new ParticlePool(scene, { count: 260, texture: soft, blending: THREE.AdditiveBlending });
-  const debris = new ParticlePool(scene, { count: 220, texture: soft, blending: THREE.NormalBlending });
+  const smoke = new ParticlePool(scene, { count: Math.round(420 * quality), texture: soft, blending: THREE.NormalBlending });
+  const dust = new ParticlePool(scene, { count: Math.round(520 * quality), texture: soft, blending: THREE.NormalBlending });
+  const sparks = new ParticlePool(scene, { count: Math.round(320 * quality), texture: spark, blending: THREE.AdditiveBlending });
+  const fire = new ParticlePool(scene, { count: Math.round(260 * quality), texture: soft, blending: THREE.AdditiveBlending });
+  const debris = new ParticlePool(scene, { count: Math.round(220 * quality), texture: soft, blending: THREE.NormalBlending });
   const shockwaves = new Shockwaves(scene);
   const lasers = new LaserBeams(scene);
   const flashes = new FlashSprites(scene);
@@ -750,7 +751,7 @@ export function createFx(scene, renderer) {
     },
     casing: emitCasing,
     smokeScreen(position, radius = 9, life = 10) {
-      for (let i = 0; i < 54; i++) {
+      for (let i = 0; i < 80; i++) {
         const angle = _random(0, Math.PI * 2);
         const distance = _random(0.2, radius * 0.7);
         smoke.spawn({
@@ -761,12 +762,12 @@ export function createFx(scene, renderer) {
           ),
           velocity: _velocity.set(Math.cos(angle) * _random(0.4, 2.4), _random(0.5, 2.4), Math.sin(angle) * _random(0.4, 2.4)),
           life: _random(life * 0.55, life),
-          size: _random(1.5, 4.2),
-          growth: _random(0.35, 1.1),
+          size: _random(2.0, 5.2),
+          growth: _random(0.45, 1.35),
           gravity: -0.08,
           drag: 0.8,
-          color: i % 4 === 0 ? 0xb2b6a4 : i % 3 === 0 ? 0x858d7f : 0x6f766a,
-          opacity: _random(0.13, 0.28),
+          color: i % 4 === 0 ? 0xc1c4b1 : i % 3 === 0 ? 0x92998a : 0x7c8375,
+          opacity: _random(0.2, 0.38),
         });
       }
     },

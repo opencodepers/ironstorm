@@ -22,15 +22,18 @@
   <div class="flash" id="flash" aria-hidden="true"></div>
   <div class="damage-flash" id="damage-flash" aria-hidden="true"></div>
   <div class="reticle" id="reticle" aria-hidden="true">
-    <span class="reticle__tag">AIM</span>
     <span class="reticle__ring"></span>
     <span class="reticle__cross"></span>
+    <span class="reticle__ladder">
+      <b>2</b><b>4</b><b>6</b><b>8</b><b>10</b><b>12</b><b>14</b><b>18</b><b>22</b><b>26</b><b>30</b><b>34</b>
+    </span>
+    <span class="reticle__mg">MG</span>
     <span class="reticle__reload" id="reload-ring"></span>
     <span class="reticle__range" id="range-readout">--- M</span>
     <span class="reticle__ammo" id="reticle-ammo">APFSDS / IMPACT</span>
   </div>
   <div class="damage-arcs" id="damage-arcs" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-  <div class="laser-warning" id="laser-warning" aria-hidden="true">LASER WARNING</div>
+  <div class="laser-warning" id="laser-warning" aria-hidden="true">INCOMING FIRE</div>
   <div class="projectile-marker" id="projectile-marker" aria-hidden="true">
     <i></i><span id="projectile-readout">TRACK</span>
   </div>
@@ -43,6 +46,11 @@
   <div class="popups" id="popups" aria-hidden="true"></div>
 
   <div class="hud">
+    <div class="drive-mini" id="drive-mini" aria-label="Driver instruments">
+      <b id="mini-gear">1</b>
+      <span id="mini-rpm">700 RPM</span>
+      <span id="mini-speed">0 KM/H</span>
+    </div>
     <header class="top">
       <div class="brand">
         <span class="eyebrow">IRONSTORM // GUNNERY LAB 02</span>
@@ -137,35 +145,132 @@
     </div>
     <div class="perf" id="perf" aria-live="polite"></div>
 
-    <footer class="controls">
-      <span><kbd>W</kbd><kbd>S</kbd> THROTTLE</span>
+    <footer class="controls" aria-label="Controls available in the ESC menu">
+      <span><kbd>W</kbd><kbd>S</kbd> THROTTLE / BRAKE</span>
       <span><kbd>A</kbd><kbd>D</kbd> STEER</span>
-      <span><kbd>SHIFT</kbd> BOOST</span>
-      <span><kbd>SPACE</kbd> BRAKE</span>
+      <span><kbd>SPACE</kbd> SERVICE BRAKE</span>
       <span><kbd>LMB</kbd> FIRE</span>
       <span><kbd>F</kbd> LASE</span>
-      <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> SHELL</span>
-      <span><kbd>MOUSE</kbd> TURRET</span>
-      <span><kbd>RMB</kbd> ORBIT</span>
-      <span><kbd>V</kbd> SIGHT</span>
-      <span><kbd>B</kbd> POLARITY</span>
-      <span><kbd>K</kbd> CREW</span>
-      <span><kbd>X</kbd> FUZE</span>
-      <span><kbd>J</kbd> WEATHER</span>
-      <span><kbd>E</kbd> REPAIR</span>
-      <span><kbd>G</kbd> HANDOFF</span>
-      <span><kbd>N</kbd> OPTICAL</span>
-      <span><kbd>Q</kbd> MG</span>
-      <span><kbd>Y</kbd> WINGMAN</span>
-      <span><kbd>I</kbd> SHOT CAM</span>
-      <span><kbd>P</kbd> PERF</span>
-      <span><kbd>O</kbd> PHOTO</span>
-      <span><kbd>M</kbd> AUDIO</span>
-      <span><kbd>R</kbd> RESET</span>
+      <span><kbd>ESC</kbd> CONTROLS</span>
     </footer>
 
     <div class="credit">T-72M BY 18095010881 · CGTRADER · ROYALTY FREE</div>
   </div>
+
+  <div class="touch" id="touch-controls" aria-label="Touch controls">
+    <div class="touch__drive" aria-label="Driving controls">
+      <button type="button" data-touch-key="KeyW" aria-label="Throttle">▲</button>
+      <button type="button" data-touch-key="KeyA" aria-label="Steer left">◀</button>
+      <button type="button" data-touch-key="KeyS" aria-label="Brake / reverse throttle">▼</button>
+      <button type="button" data-touch-key="KeyD" aria-label="Steer right">▶</button>
+    </div>
+    <div class="touch__actions" aria-label="Combat controls">
+      <button type="button" data-touch-action="menu">ESC</button>
+      <button type="button" data-touch-action="gear-down">GEAR −</button>
+      <button type="button" data-touch-action="gear-up">GEAR +</button>
+      <button type="button" data-touch-action="smoke">SMOKE</button>
+      <button type="button" data-touch-action="lase">LASE</button>
+      <button type="button" data-touch-action="fire" class="touch__fire">FIRE</button>
+    </div>
+  </div>
+
+  <section class="escape" id="escape-menu" aria-hidden="true" aria-label="Pause menu and vehicle controls">
+    <div class="escape__panel" role="dialog" aria-modal="true" aria-labelledby="escape-title">
+      <header class="escape__head">
+        <div>
+          <span class="eyebrow">T-72M // CREW CHECKLIST</span>
+          <h2 id="escape-title">PAUSED</h2>
+          <p>SIMULATION HELD · VEHICLE SYSTEMS LIVE</p>
+        </div>
+        <div class="escape__state">
+          <span id="menu-engine">ENGINE RUNNING</span>
+          <span id="menu-brake">PARKING BRAKE OFF</span>
+        </div>
+      </header>
+
+      <div class="escape__grid">
+        <section class="escape__controls" aria-label="Controls">
+          <h3>CONTROLS</h3>
+          <div class="control-group">
+            <span>DRIVING</span>
+            <div><kbd>W</kbd><kbd>S</kbd> throttle / brake</div>
+            <div><kbd>A</kbd><kbd>D</kbd> steer · neutral steer in N</div>
+            <div><kbd>`</kbd> ignition on / off</div>
+            <div><kbd>,</kbd><kbd>.</kbd> gear down / up</div>
+            <div><kbd>H</kbd> parking brake</div>
+            <div><kbd>SPACE</kbd> service brake</div>
+            <div><kbd>C</kbd> smoke grenade</div>
+          </div>
+          <div class="control-group">
+            <span>GUNNERY</span>
+            <div><kbd>MOUSE</kbd> traverse / elevate</div>
+            <div><kbd>LMB</kbd> fire cannon</div>
+            <div><kbd>SHIFT</kbd> + <kbd>LMB</kbd> coax MG</div>
+            <div><kbd>F</kbd> laser range</div>
+            <div><kbd>N</kbd> optical rangefinder</div>
+            <div><kbd>G</kbd> commander handoff</div>
+            <div><kbd>1</kbd>–<kbd>7</kbd> select shell</div>
+            <div><kbd>X</kbd> cycle fuze</div>
+            <div><kbd>Q</kbd> commander MG</div>
+            <div><kbd>Y</kbd> wingman fire mission</div>
+            <div><kbd>RMB</kbd> orbit camera</div>
+            <div><kbd>WHEEL</kbd> camera distance</div>
+          </div>
+          <div class="control-group">
+            <span>CREW / VEHICLE</span>
+            <div><kbd>K</kbd> cycle crew station</div>
+            <div><kbd>U</kbd> button up / open hatches</div>
+            <div><kbd>V</kbd> sight channel</div>
+            <div><kbd>B</kbd> thermal polarity</div>
+            <div><kbd>Z</kbd> optic zoom</div>
+            <div><kbd>E</kbd> damage control</div>
+            <div><kbd>J</kbd> weather</div>
+            <div><kbd>I</kbd> shot camera</div>
+            <div><kbd>P</kbd> performance overlay</div>
+            <div><kbd>O</kbd> photo mode</div>
+            <div><kbd>M</kbd> audio</div>
+            <div><kbd>R</kbd> reset range</div>
+          </div>
+        </section>
+
+        <section class="escape__status" aria-label="Vehicle status">
+          <h3>VEHICLE</h3>
+          <div class="status-strip">
+            <div><span>GEAR</span><b id="menu-gear">1</b></div>
+            <div><span>ENGINE</span><b id="menu-rpm">700</b></div>
+            <div><span>SPEED</span><b id="menu-speed">0</b></div>
+            <div><span>SMOKE</span><b id="menu-smoke">3</b></div>
+          </div>
+          <div class="status-line"><span>LOADOUT</span><b id="menu-shell">APFSDS / IMPACT</b></div>
+          <div class="status-line"><span>STATION</span><b id="menu-role">EXTERNAL</b></div>
+          <div class="status-line"><span>OPTIC</span><b id="menu-sight">DAY 1X</b></div>
+          <div class="status-line"><span>WEATHER</span><b id="menu-weather">CLEAR</b></div>
+          <div class="status-line"><span>GEARBOX</span><b id="menu-gearbox">AUTO</b></div>
+          <div class="status-line"><span>QUALITY</span><b id="menu-quality">HIGH</b></div>
+          <div class="menu-systems">
+            <div><span>ENGINE</span><i data-system="engine"><b></b></i></div>
+            <div><span>TRACKS</span><i data-system="tracks"><b></b></i></div>
+            <div><span>STABILIZER</span><i data-system="stabilizer"><b></b></i></div>
+            <div><span>OPTICS</span><i data-system="optics"><b></b></i></div>
+            <div><span>TURRET</span><i data-system="turret"><b></b></i></div>
+            <div><span>GUN</span><i data-system="gun"><b></b></i></div>
+            <div><span>FUEL</span><i data-system="fuel"><b></b></i></div>
+            <div><span>CREW</span><i data-system="crew"><b></b></i></div>
+          </div>
+          <p class="escape__note">Neutral steering works in <kbd>N</kbd>. First gear is engaged on reset, and the auto box shifts with the throttle; <kbd>,</kbd> and <kbd>.</kbd> switch to manual. The sight ladder is graduated in hundreds of metres.</p>
+        </section>
+      </div>
+
+      <footer class="escape__foot">
+        <button type="button" id="escape-resume">RESUME</button>
+        <button type="button" id="escape-reset">RESET RANGE</button>
+        <button type="button" id="escape-audio">AUDIO ON</button>
+        <button type="button" id="escape-gearbox">AUTO GEAR ON</button>
+        <button type="button" id="escape-quality">QUALITY HIGH</button>
+        <span>ESC TO CLOSE</span>
+      </footer>
+    </div>
+  </section>
 
   <section class="loader" id="loader">
     <div class="loader__inner">

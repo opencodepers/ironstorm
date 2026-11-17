@@ -268,7 +268,7 @@ function makeGrassGeometry() {
   return geometry;
 }
 
-export function createTerrain() {
+export function createTerrain({ lowPower = false } = {}) {
   const size = RANGE_SIZE;
   const segments = 300;
   const positions = new Float32Array((segments + 1) * (segments + 1) * 3);
@@ -302,11 +302,11 @@ export function createTerrain() {
 
   const normal = geometry.getAttribute('normal');
   const colors = new Float32Array((segments + 1) * (segments + 1) * 3);
-  const meadow = new THREE.Color(0x66714f);
-  const dryGrass = new THREE.Color(0x887a55);
-  const dirt = new THREE.Color(0x76624b);
-  const stone = new THREE.Color(0x747267);
-  const sand = new THREE.Color(0x8b7759);
+  const meadow = new THREE.Color(0x5d7446);
+  const dryGrass = new THREE.Color(0x8b7a50);
+  const dirt = new THREE.Color(0x725c42);
+  const stone = new THREE.Color(0x77766c);
+  const sand = new THREE.Color(0x927a57);
   const color = new THREE.Color();
 
   for (let i = 0; i < normal.count; i++) {
@@ -416,7 +416,7 @@ export function createTerrain() {
     metalness: 0,
     vertexColors: true,
   });
-  const grassCount = 4300;
+  const grassCount = lowPower ? 1400 : 6500;
   const grassMesh = new THREE.InstancedMesh(grassGeometry, grassMaterial, grassCount);
   const grassColor = new THREE.Color();
   let placed = 0;
@@ -425,8 +425,8 @@ export function createTerrain() {
     const z = (random() - 0.5) * 880;
     if (Math.hypot(x, z) < 17) continue;
     if (Math.abs(x) < 18 && z < -30) continue;
-    const width = 0.55 + random() * 1.35;
-    const height = 0.32 + random() * 0.68;
+    const width = 0.7 + random() * 1.6;
+    const height = 0.4 + random() * 0.9;
     dummy.position.set(x, terrainHeight(x, z) + 0.01, z);
     dummy.rotation.set(0, random() * Math.PI, 0);
     dummy.scale.set(width, height, width);

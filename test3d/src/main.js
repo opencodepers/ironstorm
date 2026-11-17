@@ -11,6 +11,9 @@ import { createEnvironment, createBallistics, GRAVITY } from './sim.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
+const AUTO_LOW_POWER = window.matchMedia?.('(pointer: coarse)').matches
+  || Math.min(window.innerWidth, window.innerHeight) < 760;
+let lowPower = AUTO_LOW_POWER;
 const ui = {
   loader: $('loader'),
   loaderBar: $('loader-bar'),
@@ -66,6 +69,27 @@ const ui = {
   repairBar: $('repair-bar'),
   repairLabel: $('repair-label'),
   tracker: $('tracker'),
+  escape: $('escape-menu'),
+  escapeResume: $('escape-resume'),
+  escapeReset: $('escape-reset'),
+  escapeAudio: $('escape-audio'),
+  escapeGearbox: $('escape-gearbox'),
+  escapeQuality: $('escape-quality'),
+  menuEngine: $('menu-engine'),
+  menuBrake: $('menu-brake'),
+  menuGear: $('menu-gear'),
+  menuRpm: $('menu-rpm'),
+  menuSpeed: $('menu-speed'),
+  menuSmoke: $('menu-smoke'),
+  menuShell: $('menu-shell'),
+  menuRole: $('menu-role'),
+  menuSight: $('menu-sight'),
+  menuWeather: $('menu-weather'),
+  menuGearbox: $('menu-gearbox'),
+  menuQuality: $('menu-quality'),
+  miniGear: $('mini-gear'),
+  miniRpm: $('mini-rpm'),
+  miniSpeed: $('mini-speed'),
 };
 
 const DEG = Math.PI / 180;
@@ -140,6 +164,20 @@ const SHELLS = [
 
 const FUSES = ['IMPACT', 'DELAY', 'PROXIMITY', 'AIRBURST'];
 const CREW_ROLES = ['EXTERNAL', 'GUNNER', 'COMMANDER', 'DRIVER'];
+// The T-72M uses a manual seven-speed gearbox. Speeds are the practical
+// limiter for each gear in m/s; N is a true neutral for pivot steering.
+const GEARS = [
+  { label: 'R', max: 5.2, accel: 2.7 },
+  { label: 'N', max: 0, accel: 0 },
+  { label: '1', max: 6.4, accel: 5.2 },
+  { label: '2', max: 8.8, accel: 4.6 },
+  { label: '3', max: 11.2, accel: 4.0 },
+  { label: '4', max: 13.6, accel: 3.4 },
+  { label: '5', max: 16.0, accel: 2.8 },
+  { label: '6', max: 18.0, accel: 2.2 },
+  { label: '7', max: 20.0, accel: 1.7 },
+];
+const FIRST_GEAR_INDEX = 2;
 const SIGHTS = ['DAY', 'THERMAL', 'NIGHT'];
 const INITIAL_OBJECTIVE = 'QUALIFY · DESTROY THE FUEL BATTERY';
 const SYSTEMS = {
@@ -162,6 +200,12 @@ const crewState = {
   photoMode: false,
 };
 let fuseIndex = 0;
+let engineOn = true;
+let parkingBrake = false;
+let autoGear = true;
+let smokeCharges = 3;
+let smokeCooldown = 0;
+let paused = false;
 let environment = null;
 let ballistics = null;
 let shotCamera = null;
@@ -171,6 +215,11 @@ let damageFlash = 0;
 let damageAngle = 0;
 let warningTimer = 0;
 let warningAngle = 0;
+let incomingTimer = 0;
+let incomingAngle = 0;
+let damageLevel = 0;
+const warningSource = new THREE.Vector3();
+const incomingSource = new THREE.Vector3();
 let mgCooldown = 0;
 let mgShots = 0;
 let enemyShots = 0;
@@ -179,7 +228,7 @@ let missionWave = 1;
 let missionKills = 0;
 let objective = INITIAL_OBJECTIVE;
 let fpsAverage = 60;
-let renderScale = 0.8;
+let renderScale = 1;
 let lastPlayerPosition = new THREE.Vector3();
 let lastFrameTime = 0;
 const playerVelocity = new THREE.Vector3();
@@ -199,15 +248,16 @@ const tank = {
   turretYaw: 0,
   gunPitch: 0.03,
   grade: 0,
-  rpm: 0,
-  gear: 'N',
+  rpm: 0.18,
+  gear: '1',
+  gearIndex: FIRST_GEAR_INDEX,
   impactCooldown: 0,
 };
 
 const cameraRig = {
   yawOffset: 0,
   pitch: 0.34,
-  distance: 15,
+  distance: 11.5,
   look: new THREE.Vector3(0, 1.5, -7),
 };
 
@@ -425,6 +475,19 @@ const app = {
       artillery: artilleryQueue.length,
       repairing: repair.module,
       repairProgress: repair.total ? 1 - repair.timer / repair.total : 0,
+      engineOn,
+      parkingBrake,
+      autoGear,
+      quality: lowPower ? 'PHONE' : 'HIGH',
+      gear: tank.gear,
+      rpm: tank.rpm,
+      smokeCharges,
+      smokeCooldown,
+      paused,
+      damageWarning: warningTimer,
+      incomingWarning: incomingTimer,
+      damageAngle,
+      incomingAngle,
       wave: missionWave,
       objective,
       projectiles: projectiles.length,
@@ -505,21 +568,21 @@ function buildScene() {
     antialias: false,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.8;
-  renderer.shadowMap.enabled = true;
+  renderer.toneMappingExposure = 0.84;
+  renderer.shadowMap.enabled = !lowPower;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x8b9485, 0.00105);
+  scene.fog = new THREE.FogExp2(0x9aa38c, 0.00082);
 
   camera = new THREE.PerspectiveCamera(56, window.innerWidth / window.innerHeight, 0.15, 8000);
   camera.position.set(0, 6.5, 17);
 
-  terrain = createTerrain();
+  terrain = createTerrain({ lowPower });
   scene.add(terrain.group);
 
   const sky = new Sky();
@@ -553,9 +616,9 @@ function buildScene() {
   pmrem.dispose();
 
   sunLight.color.set(0xffd8ad);
-  sunLight.intensity = 2.75;
-  sunLight.castShadow = true;
-  sunLight.shadow.mapSize.set(2048, 2048);
+  sunLight.intensity = 2.9;
+  sunLight.castShadow = !lowPower;
+  sunLight.shadow.mapSize.set(lowPower ? 1024 : 2048, lowPower ? 1024 : 2048);
   sunLight.shadow.camera.near = 1;
   sunLight.shadow.camera.far = 280;
   sunLight.shadow.camera.left = -68;
@@ -594,8 +657,10 @@ function buildScene() {
   post = createPost(renderer, scene, camera);
   shotCamera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 2500);
   post.setShotCamera(shotCamera, false);
-  fx = createFx(scene, renderer);
+  post.setRenderScale(renderScale);
+  fx = createFx(scene, renderer, { lowPower });
   audio = createAudio();
+  applyQualityMode();
   // Pay the AudioContext setup cost behind the loader instead of on the first
   // trigger pull. It stays suspended until the user's click resumes it.
   audio.unlock();
@@ -770,10 +835,21 @@ function resetTank(snapCamera = false) {
   tank.vy = 0;
   tank.turretYaw = 0;
   tank.gunPitch = 0.03;
+  tank.gearIndex = FIRST_GEAR_INDEX;
+  tank.gear = GEARS[FIRST_GEAR_INDEX].label;
+  tank.rpm = 0.18;
+  engineOn = true;
+  parkingBrake = false;
+  autoGear = true;
+  smokeCharges = 3;
+  smokeCooldown = 0;
+  warningTimer = 0;
+  incomingTimer = 0;
+  damageLevel = 0;
   tank.y = terrainHeight(0, 0) + 0.04;
   cameraRig.yawOffset = 0;
   cameraRig.pitch = 0.34;
-  cameraRig.distance = 15;
+  cameraRig.distance = 11.5;
   recoil.pitch = 0;
   recoil.roll = 0;
   recoil.heave = 0;
@@ -862,29 +938,63 @@ function applyRecoil() {
   tankRoot.quaternion.multiply(recoilQuaternion);
 }
 
+function applyQualityMode() {
+  if (!renderer) return;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = !lowPower;
+  if (sunLight) sunLight.castShadow = !lowPower;
+  renderScale = 1;
+  post?.setRenderScale(renderScale);
+  document.body.classList.toggle('low-power', lowPower);
+  if (ui.menuQuality) ui.menuQuality.textContent = lowPower ? 'PHONE' : 'HIGH';
+  if (ui.escapeQuality) ui.escapeQuality.textContent = lowPower ? 'QUALITY PHONE' : 'QUALITY HIGH';
+}
+
 function updateMotion(dt) {
-  const throttle = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const throttle = keys.has('KeyW') ? 1 : 0;
+  const serviceBrake = keys.has('Space');
   const steer = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
-  const boost = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const braking = keys.has('Space');
   const engineFactor = clamp(systems.engine / 100, 0.08, 1);
   const trackFactor = clamp(systems.tracks / 100, 0.2, 1);
   const traction = clamp(1 - environment.state.wet * 0.14 - environment.state.snow * 0.24 - environment.state.dust * 0.08, 0.55, 1);
-  const maxForward = (boost ? 18.5 : 13.8) * engineFactor * trackFactor * traction;
+  const gear = GEARS[tank.gearIndex] || GEARS[FIRST_GEAR_INDEX];
+  const neutral = gear.label === 'N';
+  const reversing = gear.label === 'R';
+  const canDrive = engineOn && !parkingBrake && !repair.module && !neutral;
 
-  if (repair.module) {
-    tank.speed = moveToward(tank.speed, 0, 8 * dt);
-  } else if (braking) {
+  if (!engineOn || parkingBrake || repair.module) {
+    tank.speed = moveToward(tank.speed, 0, (parkingBrake ? 18 : repair.module ? 8 : 4.2) * dt);
+  } else if (serviceBrake) {
     tank.speed = moveToward(tank.speed, 0, 13 * dt);
-  } else if (throttle > 0) {
-    tank.speed = moveToward(tank.speed, maxForward, (boost ? 6.2 : 4.1) * engineFactor * traction * dt);
-  } else if (throttle < 0) {
-    tank.speed = moveToward(tank.speed, -4.6 * engineFactor * trackFactor, 3.1 * engineFactor * dt);
+  } else if (canDrive && throttle) {
+    const target = reversing ? -gear.max : gear.max;
+    tank.speed = moveToward(tank.speed, target, gear.accel * engineFactor * traction * dt);
   } else {
-    tank.speed = moveToward(tank.speed, 0, 1.65 * dt);
+    // Neutral, or off the throttle: tracks freewheel to a stop. The service
+    // brake is the only strong deceleration; real tanks do not stop on a dime.
+    tank.speed = moveToward(tank.speed, 0, 1.25 * dt);
   }
-  tank.rpm = damp(tank.rpm, Math.abs(tank.speed) / 18.5, 4.5, dt);
-  tank.gear = tank.speed > 0.25 ? 'D' : tank.speed < -0.25 ? 'R' : 'N';
+  const gearRatio = gear.max > 0 ? Math.abs(tank.speed) / gear.max : 0;
+  tank.rpm = damp(
+    tank.rpm,
+    engineOn ? clamp(0.18 + gearRatio * 0.58 + (throttle && canDrive ? 0.12 : 0), 0, 1) : 0,
+    4.5,
+    dt,
+  );
+  tank.gear = gear.label;
+
+  if (autoGear && canDrive && throttle && !serviceBrake && !reversing) {
+    const speed = Math.abs(tank.speed);
+    if (tank.gearIndex < GEARS.length - 1 && speed >= GEARS[tank.gearIndex].max * 0.94) {
+      tank.gearIndex += 1;
+      tank.gear = GEARS[tank.gearIndex].label;
+      audio.gearShift?.();
+    } else if (tank.gearIndex > FIRST_GEAR_INDEX && speed < GEARS[tank.gearIndex - 1].max * 0.52) {
+      tank.gearIndex -= 1;
+      tank.gear = GEARS[tank.gearIndex].label;
+    }
+  }
 
   forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
   const ahead = terrainHeight(tank.x + forward.x * 2.9, tank.z + forward.z * 2.9);
@@ -894,7 +1004,13 @@ function updateMotion(dt) {
   tank.speed = clamp(tank.speed, -6.5, 21);
 
   const speedFactor = Math.min(Math.abs(tank.speed) / 9, 1);
-  tank.heading += steer * (0.62 + 0.44 * speedFactor) * trackFactor * dt;
+  if (neutral && engineOn && !parkingBrake && !repair.module) {
+    // A true neutral steer pivots on the spot by driving the tracks in
+    // opposite directions. It is deliberately slower than a moving turn.
+    tank.heading += steer * 0.46 * trackFactor * dt;
+  } else {
+    tank.heading += steer * (0.62 + 0.44 * speedFactor) * trackFactor * dt;
+  }
   forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
 
   tank.x += forward.x * tank.speed * dt;
@@ -1232,9 +1348,11 @@ function updateCamera(dt, snap = false) {
     0,
     Math.cos(tank.heading + cameraRig.yawOffset),
   );
+  const portrait = lowPower && window.innerHeight > window.innerWidth * 1.1;
+  const followDistance = portrait ? Math.max(cameraRig.distance, 17) : cameraRig.distance;
   desiredCamera.set(tank.x, tank.y + 2.15, tank.z)
-    .addScaledVector(back, Math.cos(cameraRig.pitch) * cameraRig.distance)
-    .addScaledVector(up, Math.sin(cameraRig.pitch) * cameraRig.distance);
+    .addScaledVector(back, Math.cos(cameraRig.pitch) * followDistance)
+    .addScaledVector(up, Math.sin(cameraRig.pitch) * followDistance);
   desiredCamera.y = Math.max(
     desiredCamera.y,
     terrainHeight(desiredCamera.x, desiredCamera.z) + 1.35,
@@ -1668,12 +1786,11 @@ function applyPlayerDamage({ damage = 10, kind = 'CANNON', module = null, source
   if (targetModule === 'crew') systems.crew = clamp(systems.crew - damage * 0.22, 0, 100);
   damageFlash = 1;
   warningTimer = 2.5;
-  if (source) {
-    warningAngle = Math.atan2(source.x - tank.x, source.z - tank.z);
-    damageAngle = warningAngle;
-  }
+  damageLevel = Math.min(1, 0.34 + (1 - systems.crew / 100) * 0.6);
+  if (source) warningSource.copy(source);
+  else warningSource.set(tank.x, tank.y, tank.z - 10);
   if (ui.damageArcs) ui.damageArcs.classList.add('is-visible');
-  post.setDamage(Math.min(1, 0.34 + (1 - systems.crew / 100) * 0.6));
+  post.setDamage(damageLevel);
   shake.amount = Math.min(0.8, shake.amount + 0.28);
   shake.kick = Math.min(1.2, shake.kick + 0.7);
   audio.damage();
@@ -1687,8 +1804,21 @@ function applyPlayerDamage({ damage = 10, kind = 'CANNON', module = null, source
 }
 
 function updateCombatTimers(dt) {
+  smokeCooldown = Math.max(0, smokeCooldown - dt);
   damageFlash = Math.max(0, damageFlash - dt * 1.8);
   warningTimer = Math.max(0, warningTimer - dt);
+  incomingTimer = Math.max(0, incomingTimer - dt);
+  if (camera && (warningTimer > 0 || incomingTimer > 0)) {
+    camera.getWorldDirection(tmpVector);
+    const cameraBearing = Math.atan2(-tmpVector.x, -tmpVector.z);
+    if (warningTimer > 0) {
+      damageAngle = wrapAngle(Math.atan2(warningSource.x - tank.x, -(warningSource.z - tank.z)) - cameraBearing);
+    }
+    if (incomingTimer > 0) {
+      incomingAngle = wrapAngle(Math.atan2(incomingSource.x - tank.x, -(incomingSource.z - tank.z)) - cameraBearing);
+    }
+  }
+  post.setDamage(warningTimer > 0 ? damageLevel * clamp(warningTimer / 2.5, 0, 1) : 0);
   mgCooldown = Math.max(0, mgCooldown - dt);
   gun.barrelHeat = Math.max(0, gun.barrelHeat - dt * 0.055);
   gun.barrelWear = Math.min(1, gun.barrelWear + dt * 0.000005);
@@ -2075,8 +2205,8 @@ function handleEnemyFire(payload) {
   const pan = clamp((tmpVector2.copy(from).sub(tankRoot.position).normalize().dot(forward)), -1, 1) * 0.7;
   if (kind === 'ATGM') audio.missile(distance, pan);
   else audio.distantFire(distance, pan);
-  warningTimer = Math.max(warningTimer, 1.4);
-  warningAngle = Math.atan2(from.x - tank.x, from.z - tank.z);
+  incomingTimer = Math.max(incomingTimer, 1.4);
+  incomingSource.copy(from);
   showNotice(`${source?.name || 'HOSTILE'} · ${kind} INCOMING`, 900);
 }
 
@@ -2175,7 +2305,10 @@ function handleRangeEvent(type, data) {
     showNotice(`WAVE ${missionWave} · THREAT INCREASED`, 1500);
     audio.radio(`Wave ${missionWave}, stand by`);
   } else if (type === 'enemyFire') {
-    if (data?.name) warningTimer = Math.max(warningTimer, 0.8);
+    if (data?.name) {
+      incomingTimer = Math.max(incomingTimer, 0.8);
+      incomingSource.set(tank.x, tank.y, tank.z - 100);
+    }
   } else if (type === 'artillery') {
     showNotice('OBSERVER ACTIVE · INDIRECT FIRE', 900);
   } else if (type === 'respawn') {
@@ -2223,21 +2356,29 @@ function updateHud(dt) {
   hudElapsed = 0;
 
   const kmh = Math.round(Math.abs(tank.speed) * 3.6);
+  const rpmText = engineOn ? `${Math.round(600 + tank.rpm * 1600)} RPM` : 'ENGINE OFF';
   if (ui.speed) ui.speed.textContent = String(kmh).padStart(3, '0');
   if (ui.gear) ui.gear.textContent = tank.gear;
-  const throttle = (keys.has('KeyW') || keys.has('KeyS')) ? 1 : 0;
+  if (ui.miniGear) ui.miniGear.textContent = tank.gear;
+  if (ui.miniRpm) ui.miniRpm.textContent = rpmText;
+  if (ui.miniSpeed) ui.miniSpeed.textContent = `${kmh} KM/H`;
+  const throttle = keys.has('KeyW') ? 1 : 0;
   if (ui.throttle) ui.throttle.style.transform = `scaleX(${throttle})`;
   if (ui.driveState) ui.driveState.textContent = repair.module
     ? 'REPAIR'
-    : keys.has('Space')
-      ? 'BRAKE'
-      : keys.has('ShiftLeft') || keys.has('ShiftRight')
-        ? 'BOOST'
-        : tank.speed < -0.25
-          ? 'REVERSE'
-          : tank.speed > 0.25
-            ? 'DRIVE'
-            : 'IDLE';
+    : parkingBrake
+      ? 'PARKING'
+      : !engineOn
+        ? 'ENGINE OFF'
+        : keys.has('Space')
+          ? 'BRAKE'
+          : tank.gear === 'N'
+            ? 'NEUTRAL'
+            : tank.speed < -0.25
+              ? 'REVERSE'
+              : tank.speed > 0.25
+                ? 'DRIVE'
+                : 'IDLE';
   const traverse = ((tank.turretYaw * 180) / Math.PI + 360) % 360;
   if (ui.turret) ui.turret.textContent = `${String(Math.round(traverse)).padStart(3, '0')}°`;
   const elevation = (tank.gunPitch * 180) / Math.PI;
@@ -2276,13 +2417,28 @@ function updateHud(dt) {
     ui.tracker.classList.toggle('is-locked', Boolean(gun.trackedTarget?.alive));
   }
   if (ui.shotFlag) ui.shotFlag.textContent = shotCameraActive ? 'SHOT CAM ON' : '';
+  if (ui.menuEngine) ui.menuEngine.textContent = engineOn ? 'ENGINE RUNNING' : 'ENGINE OFF';
+  if (ui.menuBrake) ui.menuBrake.textContent = parkingBrake ? 'PARKING BRAKE ON' : 'PARKING BRAKE OFF';
+  if (ui.menuGear) ui.menuGear.textContent = tank.gear;
+  if (ui.menuRpm) ui.menuRpm.textContent = rpmText;
+  if (ui.menuSpeed) ui.menuSpeed.textContent = `${kmh} KM/H`;
+  if (ui.menuSmoke) ui.menuSmoke.textContent = smokeCooldown > 0 ? `${smokeCharges} · ${Math.ceil(smokeCooldown)}S` : `${smokeCharges} READY`;
+  if (ui.menuShell) ui.menuShell.textContent = `${spec.id} / ${FUSES[fuseIndex]}`;
+  if (ui.menuRole) ui.menuRole.textContent = crewState.role;
+  if (ui.menuSight) ui.menuSight.textContent = `${crewState.sight} ${crewState.sight === 'THERMAL' ? (crewState.thermalPolarity > 0 ? 'WH' : 'BH') : `${crewState.zoom}X`}`;
+  if (ui.menuWeather) ui.menuWeather.textContent = environment.getState().label;
+  if (ui.menuGearbox) ui.menuGearbox.textContent = autoGear ? 'AUTO' : 'MANUAL';
+  if (ui.menuQuality) ui.menuQuality.textContent = lowPower ? 'PHONE' : 'HIGH';
+  if (ui.escapeAudio) ui.escapeAudio.textContent = `AUDIO ${audio.muted ? 'OFF' : 'ON'}`;
+  if (ui.escapeGearbox) ui.escapeGearbox.textContent = autoGear ? 'AUTO GEAR ON' : 'AUTO GEAR OFF';
+  if (ui.escapeQuality) ui.escapeQuality.textContent = lowPower ? 'QUALITY PHONE' : 'QUALITY HIGH';
   if (ui.damageArcs) {
     ui.damageArcs.style.setProperty('--damage-angle', `${damageAngle}rad`);
     ui.damageArcs.classList.toggle('is-visible', warningTimer > 0);
   }
   if (ui.laserWarning) {
-    ui.laserWarning.style.setProperty('--warning-angle', `${warningAngle}rad`);
-    ui.laserWarning.classList.toggle('is-visible', warningTimer > 0);
+    ui.laserWarning.style.setProperty('--warning-angle', `${incomingAngle}rad`);
+    ui.laserWarning.classList.toggle('is-visible', incomingTimer > 0);
   }
   for (const bar of ui.systemBars) {
     const key = bar.dataset.system;
@@ -2359,11 +2515,13 @@ function updateAdaptiveResolution(dt) {
   adaptiveTimer += dt;
   if (adaptiveTimer < 2.4) return;
   adaptiveTimer = 0;
-  if (fpsAverage < 36 && renderScale > 0.58) {
-    renderScale = Math.max(0.58, renderScale - 0.05);
+  const minScale = lowPower ? 0.8 : 0.85;
+  const maxScale = 1;
+  if (fpsAverage < 36 && renderScale > minScale) {
+    renderScale = Math.max(minScale, renderScale - 0.05);
     post.setRenderScale(renderScale);
-  } else if (fpsAverage > 54 && renderScale < 0.85) {
-    renderScale = Math.min(0.85, renderScale + 0.03);
+  } else if (fpsAverage > 54 && renderScale < maxScale) {
+    renderScale = Math.min(maxScale, renderScale + 0.03);
     post.setRenderScale(renderScale);
   }
 }
@@ -2373,13 +2531,13 @@ function animate() {
   const rawDt = Math.min(clock.getDelta(), 0.25);
   const dt = Math.min(rawDt, 0.2);
   frameStart = performance.now();
-  if (environment) {
+  if (environment && !paused) {
     environment.update(dt, tankRoot?.position || tmpVector.set(0, 0, 0));
     sunDirection.copy(environment.state.sunDirection);
   }
   updateSun();
   if (app.ready) {
-    if (!crewState.photoMode) {
+    if (!paused && !crewState.photoMode) {
       simAccumulator = Math.min(0.5, simAccumulator + dt);
       let steps = 0;
       while (simAccumulator >= 1 / 60 && steps < 24) {
@@ -2389,18 +2547,21 @@ function animate() {
       }
       updateCombatTimers(dt);
     }
-    updateCamera(dt);
-    updateReticles();
+    if (!paused) {
+      updateCamera(dt);
+      updateReticles();
+      updateShotCamera();
+      updateAdaptiveResolution(dt);
+    }
     updateHud(dt);
-    updateShotCamera();
-    updateAdaptiveResolution(dt);
   }
-  if (environment) fx.setWind(environment.wind);
-  fx.update(dt);
+  if (environment && !paused) fx.setWind(environment.wind);
+  if (!paused) fx.update(dt);
   audio.update({
     speed: tank.speed,
-    moving: Math.abs(tank.speed) > 0.5,
+    moving: !paused && Math.abs(tank.speed) > 0.5,
     rpm: tank.rpm,
+    engineOn: engineOn && !paused,
     rain: environment?.state.rain || 0,
     wind: environment?.state.windSpeed || 0,
     buttoned: crewState.buttoned,
@@ -2438,6 +2599,86 @@ function togglePerf() {
   ui.perf.classList.toggle('is-visible');
 }
 
+function setPaused(open) {
+  if (!app.ready) return;
+  paused = Boolean(open);
+  document.body.classList.toggle('is-paused', paused);
+  if (ui.escape) {
+    ui.escape.classList.toggle('is-open', paused);
+    ui.escape.setAttribute('aria-hidden', String(!paused));
+  }
+  if (paused) {
+    keys.clear();
+    pointer.dragging = false;
+    document.body.classList.remove('is-pointing', 'is-dragging');
+    simAccumulator = 0;
+    updateHud(0.2);
+  } else {
+    clock.getDelta();
+    simAccumulator = 0;
+  }
+}
+
+function shiftGear(direction) {
+  if (paused) return;
+  autoGear = false;
+  const next = clamp(tank.gearIndex + direction, 0, GEARS.length - 1);
+  if (next === tank.gearIndex) {
+    showNotice(direction > 0 ? 'TOP GEAR' : 'LOWEST GEAR', 700);
+    return;
+  }
+  tank.gearIndex = next;
+  tank.gear = GEARS[next].label;
+  showNotice(`GEAR ${tank.gear}`, 780);
+  audio.gearShift?.();
+}
+
+function toggleIgnition() {
+  if (paused) return;
+  if (engineOn && Math.abs(tank.speed) > 1.2) {
+    showNotice('STOP THE VEHICLE BEFORE SHUTDOWN', 1000);
+    return;
+  }
+  engineOn = !engineOn;
+  if (!engineOn) {
+    tank.rpm = 0;
+    showNotice('ENGINE SHUT DOWN', 1100);
+  } else {
+    showNotice('ENGINE START · IDLE', 1100);
+  }
+  audio.ignition?.(engineOn);
+}
+
+function toggleParkingBrake() {
+  if (paused) return;
+  parkingBrake = !parkingBrake;
+  showNotice(parkingBrake ? 'PARKING BRAKE SET' : 'PARKING BRAKE RELEASED', 900);
+  audio.click?.();
+}
+
+function deploySmoke() {
+  if (!app.ready || paused) return;
+  if (smokeCooldown > 0) {
+    showNotice(`SMOKE READY IN ${Math.ceil(smokeCooldown)}S`, 900);
+    return;
+  }
+  if (smokeCharges <= 0) {
+    showNotice('SMOKE DISCHARGERS EMPTY', 1000);
+    return;
+  }
+  smokeCharges--;
+  smokeCooldown = 9;
+  const origin = new THREE.Vector3(
+    tank.x - Math.sin(tank.heading) * 9,
+    tank.y + 0.9,
+    tank.z - Math.cos(tank.heading) * 9,
+  );
+  fx.smokeScreen(origin, 17, 16);
+  fx.smokeScreen(new THREE.Vector3(tank.x, tank.y + 1.1, tank.z), 9, 12);
+  audio.smoke?.();
+  showNotice(`SMOKE GRENADE · ${smokeCharges} REMAIN`, 1200);
+}
+
 function togglePhoto() {
   crewState.photoMode = !crewState.photoMode;
   document.body.classList.toggle('photo-mode', crewState.photoMode);
@@ -2449,7 +2690,7 @@ function togglePhoto() {
   } else {
     cameraRig.yawOffset = 0;
     cameraRig.pitch = 0.34;
-    cameraRig.distance = 15;
+    cameraRig.distance = 11.5;
     updateCamera(1, true);
     showNotice('SIMULATION RESUMED', 900);
   }
@@ -2464,19 +2705,49 @@ function selectShell(index) {
 }
 
 function bindInput() {
+  ui.escapeResume?.addEventListener('click', () => setPaused(false));
+  ui.escapeReset?.addEventListener('click', () => {
+    resetTank(true);
+    setPaused(false);
+    showNotice('RANGE RESET · ENGINE RUNNING · GEAR 1', 1400);
+  });
+  ui.escapeAudio?.addEventListener('click', () => {
+    const muted = audio.toggle();
+    showNotice(muted ? 'AUDIO MUTED' : 'AUDIO LIVE', 900);
+    updateHud(0.2);
+  });
+  ui.escapeGearbox?.addEventListener('click', () => {
+    autoGear = !autoGear;
+    showNotice(autoGear ? 'AUTO GEARBOX ON' : 'MANUAL GEARBOX', 1000);
+    updateHud(0.2);
+  });
+  ui.escapeQuality?.addEventListener('click', () => {
+    lowPower = !lowPower;
+    applyQualityMode();
+    showNotice(lowPower ? 'PHONE QUALITY · PERFORMANCE' : 'HIGH QUALITY · SHADOWS ON', 1300);
+    updateHud(0.2);
+  });
+
   window.addEventListener('keydown', (event) => {
+    if (event.code === 'Escape') {
+      event.preventDefault();
+      if (paused) setPaused(false);
+      else if (crewState.photoMode) togglePhoto();
+      else setPaused(true);
+      return;
+    }
+    if (paused) return;
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
       event.preventDefault();
     }
     keys.add(event.code);
     if (event.repeat) return;
     if (event.code === 'KeyR') resetTank(true);
-    if (event.code === 'KeyC') {
-      cameraRig.yawOffset = 0;
-      cameraRig.pitch = 0.34;
-      cameraRig.distance = 15;
-    }
-    if (event.code === 'KeyH') document.body.classList.toggle('hide-hints');
+    if (event.code === 'KeyC') deploySmoke();
+    if (event.code === 'KeyH') toggleParkingBrake();
+    if (event.code === 'Backquote') toggleIgnition();
+    if (event.code === 'Comma' || event.code === 'BracketLeft') shiftGear(-1);
+    if (event.code === 'Period' || event.code === 'BracketRight') shiftGear(1);
     if (event.code === 'KeyF') lase();
     if (event.code === 'KeyN') backupRange();
     if (event.code === 'KeyG') designateTarget();
@@ -2493,7 +2764,6 @@ function bindInput() {
     if (event.code === 'KeyI') toggleShotCamera();
     if (event.code === 'KeyP') togglePerf();
     if (event.code === 'KeyO') togglePhoto();
-    if (event.code === 'Escape' && crewState.photoMode) togglePhoto();
     if (event.code === 'KeyM') {
       const muted = audio.toggle();
       showNotice(muted ? 'AUDIO MUTED' : 'AUDIO LIVE', 900);
@@ -2507,11 +2777,46 @@ function bindInput() {
     if (event.code === 'Digit7') selectShell(6);
   });
 
+  for (const button of document.querySelectorAll('[data-touch-key]')) {
+    const code = button.dataset.touchKey;
+    const press = (event) => {
+      event.preventDefault();
+      audio.unlock();
+      keys.add(code);
+      button.classList.add('is-down');
+      button.setPointerCapture?.(event.pointerId);
+    };
+    const release = (event) => {
+      event.preventDefault();
+      keys.delete(code);
+      button.classList.remove('is-down');
+    };
+    button.addEventListener('pointerdown', press);
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+    button.addEventListener('lostpointercapture', release);
+  }
+
+  for (const button of document.querySelectorAll('[data-touch-action]')) {
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      audio.unlock();
+      const action = button.dataset.touchAction;
+      if (action === 'menu') setPaused(true);
+      if (action === 'fire') fire();
+      if (action === 'lase') lase();
+      if (action === 'smoke') deploySmoke();
+      if (action === 'gear-up') shiftGear(1);
+      if (action === 'gear-down') shiftGear(-1);
+    });
+  }
+
   window.addEventListener('keyup', (event) => keys.delete(event.code));
   window.addEventListener('blur', () => {
     keys.clear();
     pointer.dragging = false;
     document.body.classList.remove('is-dragging');
+    for (const button of document.querySelectorAll('[data-touch-key]')) button.classList.remove('is-down');
   });
 
   canvas.addEventListener('pointerenter', () => {
@@ -2585,7 +2890,7 @@ function bindInput() {
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     post.setSize();
     fx.resize();

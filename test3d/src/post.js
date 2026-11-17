@@ -14,8 +14,8 @@ const FinalShader = {
     toneMappingExposure: { value: 0.8 },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uVignette: { value: 0.5 },
-    uGrain: { value: 0.025 },
+    uVignette: { value: 0.38 },
+    uGrain: { value: 0.002 },
     uFlash: { value: 0 },
     uWarm: { value: 0.1 },
     uSight: { value: 0 },
@@ -120,9 +120,9 @@ const FinalShader = {
       linear.b = texture2D(tDiffuse, uv - direction * aberration).b;
 
       vec3 color = sRGBTransferOETF(vec4(ACESFilmicToneMapping(linear), 1.0)).rgb;
-      color = (color - 0.5) * 1.045 + 0.5;
+      color = (color - 0.5) * 1.06 + 0.5;
       float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luma), color, 1.08);
+      color = mix(vec3(luma), color, 1.1);
       color = mix(color, color * vec3(1.025, 1.0, 0.965), uWarm);
       color = mix(color, color * vec3(0.84, 0.94, 0.97), uWet * 0.34);
       color = mix(color, vec3(luma * 1.08 + 0.045), uSnow * 0.2);
@@ -156,7 +156,7 @@ const FinalShader = {
       }
 
       float grain = hash(uv * uResolution + fract(uTime) * 91.7) - 0.5;
-      color += grain * (uGrain + uPhoto * 0.02);
+      color += grain * (uGrain + uPhoto * 0.002);
       color = mix(color, vec3(1.0, 0.78, 0.52), uFlash * 0.16);
 
       // Small after-action shot camera. The scene is rerendered into tShot only
@@ -182,7 +182,7 @@ const FinalShader = {
 
 export function createPost(renderer, scene, camera) {
   const composer = new EffectComposer(renderer);
-  let renderScale = 0.8;
+  let renderScale = 1;
   composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5) * renderScale);
   composer.setSize(window.innerWidth, window.innerHeight);
 
@@ -221,7 +221,7 @@ export function createPost(renderer, scene, camera) {
     composer,
     grade,
     setRenderScale(value) {
-      const next = Math.min(1, Math.max(0.5, value));
+      const next = Math.min(1, Math.max(0.75, value));
       if (Math.abs(next - renderScale) < 0.01) return;
       renderScale = next;
       setSize();
