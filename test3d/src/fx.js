@@ -10,6 +10,8 @@ const _tilt = new THREE.Quaternion();
 const _yaw = new THREE.Quaternion();
 const _matrix = new THREE.Matrix4();
 const _scale = new THREE.Vector3();
+const _wind = new THREE.Vector3();
+const _euler = new THREE.Euler();
 const _random = (min, max) => min + Math.random() * (max - min);
 
 function canvasTexture(size, draw, colorSpace = THREE.SRGBColorSpace) {
@@ -148,6 +150,7 @@ class ParticlePool {
     this.positions = new Float32Array(count * 3);
     this.velocities = new Float32Array(count * 3);
     this.colors = new Float32Array(count * 3);
+    this.wind = new THREE.Vector3();
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
@@ -249,9 +252,9 @@ class ParticlePool {
       this.velocities[index] *= drag;
       this.velocities[index + 2] *= drag;
       this.velocities[index + 1] = this.velocities[index + 1] * drag - this.gravity[i] * dt;
-      this.positions[index] += this.velocities[index] * dt;
+      this.positions[index] += (this.velocities[index] + this.wind.x * 0.22) * dt;
       this.positions[index + 1] += this.velocities[index + 1] * dt;
-      this.positions[index + 2] += this.velocities[index + 2] * dt;
+      this.positions[index + 2] += (this.velocities[index + 2] + this.wind.z * 0.22) * dt;
       this.size[i] += this.growth[i] * dt;
       const age = this.maxLife[i] - this.life[i];
       const fadeIn = Math.min(1, age * 18);
@@ -510,6 +513,56 @@ export function createFx(scene, renderer) {
   const tracks = new DecalLayer(scene, makeTrackTexture(), 220, 0.72);
   const pools = [smoke, dust, sparks, fire, debris];
   const size = new THREE.Vector2();
+  const casings = [];
+  const casingMaterial = new THREE.MeshStandardMaterial({
+    color: 0xb9843a,
+    roughness: 0.36,
+    metalness: 0.88,
+    toneMapped: false,
+  });
+  const casingGeometry = new THREE.CylinderGeometry(0.035, 0.045, 0.2, 6).rotateZ(Math.PI / 2);
+  for (let i = 0; i < 28; i++) {
+    const mesh = new THREE.Mesh(casingGeometry, casingMaterial);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    casings.push({ mesh, life: 0, velocity: new THREE.Vector3(), spin: new THREE.Vector3() });
+  }
+
+  const emitCasing = (position, direction) => {
+    const item = casings.find((entry) => entry.life <= 0) || casings[0];
+    item.life = 4.5;
+    item.mesh.visible = true;
+    item.mesh.position.copy(position);
+    item.velocity.copy(direction).multiplyScalar(_random(1.2, 3.4));
+    item.velocity.x += _random(-1.4, 1.4);
+    item.velocity.y += _random(1.2, 3.0);
+    item.velocity.z += _random(-1.4, 1.4);
+    item.spin.set(_random(-14, 14), _random(-14, 14), _random(-14, 14));
+    item.mesh.rotation.set(_random(0, 6), _random(0, 6), _random(0, 6));
+  };
+
+  const updateCasings = (dt) => {
+    for (const item of casings) {
+      if (item.life <= 0) continue;
+      item.life -= dt;
+      if (item.life <= 0) {
+        item.mesh.visible = false;
+        continue;
+      }
+      item.velocity.y -= 12.5 * dt;
+      item.mesh.position.addScaledVector(item.velocity, dt);
+      if (item.mesh.position.y < 0.05) {
+        item.mesh.position.y = 0.05;
+        item.velocity.y = Math.abs(item.velocity.y) * 0.16;
+        item.velocity.x *= 0.55;
+        item.velocity.z *= 0.55;
+      }
+      item.mesh.rotation.x += item.spin.x * dt;
+      item.mesh.rotation.y += item.spin.y * dt;
+      item.mesh.rotation.z += item.spin.z * dt;
+    }
+  };
 
   const resize = () => {
     renderer.getDrawingBufferSize(size);
@@ -523,6 +576,7 @@ export function createFx(scene, renderer) {
   };
 
   const emitMuzzle = (position, direction, origin = null) => {
+    _euler.set(0, 0, 0);
     const groundX = origin ? origin.x : position.x;
     const groundY = origin ? origin.y + 0.07 : position.y - 2.4;
     const groundZ = origin ? origin.z : position.z;
@@ -682,12 +736,39 @@ export function createFx(scene, renderer) {
 
   return {
     resize,
+    setWind(vector) {
+      _wind.copy(vector);
+      for (const pool of pools) pool.wind.copy(_wind);
+    },
     update(dt) {
       for (const pool of pools) pool.update(dt);
+      updateCasings(dt);
       shockwaves.update(dt);
       lasers.update(dt);
       flashes.update(dt);
       lights.update(dt);
+    },
+    casing: emitCasing,
+    smokeScreen(position, radius = 9, life = 10) {
+      for (let i = 0; i < 54; i++) {
+        const angle = _random(0, Math.PI * 2);
+        const distance = _random(0.2, radius * 0.7);
+        smoke.spawn({
+          position: _position.set(
+            position.x + Math.cos(angle) * distance,
+            position.y + _random(0.2, 2.8),
+            position.z + Math.sin(angle) * distance,
+          ),
+          velocity: _velocity.set(Math.cos(angle) * _random(0.4, 2.4), _random(0.5, 2.4), Math.sin(angle) * _random(0.4, 2.4)),
+          life: _random(life * 0.55, life),
+          size: _random(1.5, 4.2),
+          growth: _random(0.35, 1.1),
+          gravity: -0.08,
+          drag: 0.8,
+          color: i % 4 === 0 ? 0xb2b6a4 : i % 3 === 0 ? 0x858d7f : 0x6f766a,
+          opacity: _random(0.13, 0.28),
+        });
+      }
     },
     prewarm() {
       // Decals are hidden until they are first used. Show them for one render

@@ -7,6 +7,7 @@ import { createPost } from './post.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { createRange } from './range.js';
+import { createEnvironment, createBallistics, GRAVITY } from './sim.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -42,6 +43,29 @@ const ui = {
   flash: $('flash'),
   notice: $('notice'),
   ammoChips: [...document.querySelectorAll('[data-shell]')],
+  sight: $('sight-mode'),
+  role: $('crew-role'),
+  weather: $('weather'),
+  wind: $('wind'),
+  temp: $('temp'),
+  fuse: $('fuse'),
+  compass: $('compass'),
+  objective: $('objective'),
+  systems: $('systems'),
+  systemBars: [...document.querySelectorAll('[data-system]')],
+  damageArcs: $('damage-arcs'),
+  laserWarning: $('laser-warning'),
+  projectileMarker: $('projectile-marker'),
+  projectileReadout: $('projectile-readout'),
+  perf: $('perf'),
+  reloadRing: $('reload-ring'),
+  shotFlag: $('shot-flag'),
+  backend: $('backend'),
+  damageFlash: $('damage-flash'),
+  repair: $('repair'),
+  repairBar: $('repair-bar'),
+  repairLabel: $('repair-label'),
+  tracker: $('tracker'),
 };
 
 const DEG = Math.PI / 180;
@@ -78,45 +102,92 @@ const saveBest = (value) => {
 
 const SHELLS = [
   {
-    id: 'APFSDS',
-    label: 'APFSDS',
-    velocity: 850,
-    drag: 0.000035,
-    reload: 6.4,
-    damage: 125,
-    blast: 1.5,
-    recoil: 0.95,
-    tracer: 0xffe7b0,
-    color: 0xe6cf92,
-    hint: 'SABOT · FLAT TRAJECTORY',
+    id: 'APFSDS', label: 'APFSDS', velocity: 850, drag: 0.000035, reload: 6.4,
+    damage: 125, penetration: 560, blast: 1.5, recoil: 0.95, heat: 0.09, wear: 0.022,
+    tracer: 0xffe7b0, color: 0xe6cf92, hint: 'SABOT · FLAT TRAJECTORY', caliber: 125,
   },
   {
-    id: 'HEAT',
-    label: 'HEAT-FS',
-    velocity: 620,
-    drag: 0.00005,
-    reload: 7.8,
-    damage: 95,
-    blast: 5.5,
-    recoil: 1.15,
-    tracer: 0xffb05e,
-    color: 0xd88946,
-    hint: 'CHEMICAL · BLAST',
+    id: 'HEAT', label: 'HEAT-FS', velocity: 620, drag: 0.00005, reload: 7.8,
+    damage: 115, penetration: 480, blast: 5.5, recoil: 1.15, heat: 0.12, wear: 0.02,
+    tracer: 0xffb05e, color: 0xd88946, hint: 'CHEMICAL · BLAST', caliber: 125,
   },
   {
-    id: 'HE',
-    label: 'HE-FRAG',
-    velocity: 680,
-    drag: 0.00006,
-    reload: 8.6,
-    damage: 55,
-    blast: 9,
-    recoil: 1.3,
-    tracer: 0xff8a4a,
-    color: 0xc76b42,
-    hint: 'AREA · ANTI-MATERIEL',
+    id: 'HE', label: 'HE-FRAG', velocity: 680, drag: 0.00006, reload: 8.6,
+    damage: 70, penetration: 80, blast: 9, recoil: 1.3, heat: 0.16, wear: 0.018,
+    tracer: 0xff8a4a, color: 0xc76b42, hint: 'AREA · ANTI-MATERIEL', caliber: 125,
+  },
+  {
+    id: 'HESH', label: 'HESH', velocity: 600, drag: 0.00006, reload: 8.2,
+    damage: 88, penetration: 160, blast: 7.5, recoil: 1.22, heat: 0.14, wear: 0.02,
+    tracer: 0xffcf86, color: 0xd6b274, hint: 'SPALL · ANTI-STRUCTURE', caliber: 125,
+  },
+  {
+    id: 'SMOKE', label: 'SMOKE', velocity: 420, drag: 0.00008, reload: 5.2,
+    damage: 1, penetration: 0, blast: 0, recoil: 0.72, heat: 0.07, wear: 0.012,
+    tracer: 0xc6d6b2, color: 0x7f8d78, hint: 'SCREEN · CONCEALMENT', caliber: 125, smoke: true,
+  },
+  {
+    id: 'CAN', label: 'CANISTER', velocity: 760, drag: 0.00012, reload: 5.6,
+    damage: 22, penetration: 24, blast: 1, recoil: 0.82, heat: 0.08, wear: 0.015,
+    tracer: 0xffe0a0, color: 0xd7a15b, hint: 'CLOSE · 12 PELLETS', caliber: 125, pellets: 8,
+  },
+  {
+    id: 'ATGM', label: 'ATGM', velocity: 300, drag: 0.000015, reload: 11.5,
+    damage: 180, penetration: 700, blast: 6, recoil: 0.8, heat: 0.06, wear: 0.01,
+    tracer: 0xff8750, color: 0xbd5a38, hint: 'GUIDED · LONG RANGE', caliber: 125, guided: true,
   },
 ];
+
+const FUSES = ['IMPACT', 'DELAY', 'PROXIMITY', 'AIRBURST'];
+const CREW_ROLES = ['EXTERNAL', 'GUNNER', 'COMMANDER', 'DRIVER'];
+const SIGHTS = ['DAY', 'THERMAL', 'NIGHT'];
+const INITIAL_OBJECTIVE = 'QUALIFY · DESTROY THE FUEL BATTERY';
+const SYSTEMS = {
+  engine: 100,
+  tracks: 100,
+  stabilizer: 100,
+  optics: 100,
+  turret: 100,
+  gun: 100,
+  fuel: 100,
+  crew: 100,
+};
+const systems = { ...SYSTEMS };
+const crewState = {
+  role: 'EXTERNAL',
+  sight: 'DAY',
+  thermalPolarity: 1,
+  zoom: 1,
+  buttoned: false,
+  photoMode: false,
+};
+let fuseIndex = 0;
+let environment = null;
+let ballistics = null;
+let shotCamera = null;
+let shotCameraActive = false;
+let repair = { module: null, timer: 0, total: 0 };
+let damageFlash = 0;
+let damageAngle = 0;
+let warningTimer = 0;
+let warningAngle = 0;
+let mgCooldown = 0;
+let mgShots = 0;
+let enemyShots = 0;
+let artilleryShots = 0;
+let missionWave = 1;
+let missionKills = 0;
+let objective = INITIAL_OBJECTIVE;
+let fpsAverage = 60;
+let renderScale = 0.8;
+let lastPlayerPosition = new THREE.Vector3();
+let lastFrameTime = 0;
+const playerVelocity = new THREE.Vector3();
+const enemyProjectiles = [];
+const artilleryQueue = [];
+const tmpVector = new THREE.Vector3();
+const tmpVector2 = new THREE.Vector3();
+const tmpMatrix = new THREE.Matrix4();
 
 const tank = {
   x: 0,
@@ -128,6 +199,9 @@ const tank = {
   turretYaw: 0,
   gunPitch: 0.03,
   grade: 0,
+  rpm: 0,
+  gear: 'N',
+  impactCooldown: 0,
 };
 
 const cameraRig = {
@@ -266,7 +340,18 @@ const gun = {
   best: loadBest(),
   lasedRange: 0,
   lasedTimer: 0,
+  lasedTarget: null,
+  trackedTarget: null,
+  solution: 0,
+  solutionTimer: 0,
+  armed: false,
   lastShot: null,
+  barrelHeat: 0,
+  barrelWear: 0,
+  zeroError: 0,
+  lastHit: null,
+  lastResult: null,
+  reloadStage: 0,
 };
 
 const projectiles = [];
@@ -320,6 +405,28 @@ const app = {
       reload: Math.max(0, gun.reload),
       reloadProgress: gun.reloadTotal > 0 ? 1 - clamp(gun.reload / gun.reloadTotal, 0, 1) : 1,
       lasedRange: gun.lasedRange,
+      armed: gun.armed,
+      solution: gun.solution,
+      barrelHeat: gun.barrelHeat,
+      barrelWear: gun.barrelWear,
+      fuse: FUSES[fuseIndex],
+      sight: crewState.sight,
+      thermalPolarity: crewState.thermalPolarity,
+      role: crewState.role,
+      buttoned: crewState.buttoned,
+      photoMode: crewState.photoMode,
+      weather: environment?.getState?.() || null,
+      systems: { ...systems },
+      shotCamera: shotCameraActive,
+      mgShots,
+      enemyShots,
+      artilleryShots,
+      enemyProjectiles: enemyProjectiles.length,
+      artillery: artilleryQueue.length,
+      repairing: repair.module,
+      repairProgress: repair.total ? 1 - repair.timer / repair.total : 0,
+      wave: missionWave,
+      objective,
       projectiles: projectiles.length,
       targets: targetStates,
     };
@@ -440,8 +547,8 @@ function buildScene() {
   envSky.scale.setScalar(2000);
   envScene.add(envSky);
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const environment = pmrem.fromScene(envScene, 0.04, 0.1, 4000);
-  scene.environment = environment.texture;
+  const environmentMap = pmrem.fromScene(envScene, 0.04, 0.1, 4000);
+  scene.environment = environmentMap.texture;
   scene.environmentIntensity = 0.54;
   pmrem.dispose();
 
@@ -468,6 +575,15 @@ function buildScene() {
   const hemisphere = new THREE.HemisphereLight(0xb6c4cf, 0x3e392d, 0.26);
   scene.add(hemisphere);
 
+  environment = createEnvironment(scene, {
+    sky,
+    sunLight,
+    terrainMaterial: terrain.material,
+    hemisphere,
+    renderer,
+  });
+  ballistics = createBallistics();
+
   tankRoot = new THREE.Group();
   tankRoot.name = 'tank_root';
   scene.add(tankRoot);
@@ -476,6 +592,8 @@ function buildScene() {
   scene.add(contactShadow);
 
   post = createPost(renderer, scene, camera);
+  shotCamera = new THREE.PerspectiveCamera(42, 16 / 9, 0.1, 2500);
+  post.setShotCamera(shotCamera, false);
   fx = createFx(scene, renderer);
   audio = createAudio();
   // Pay the AudioContext setup cost behind the loader instead of on the first
@@ -608,12 +726,19 @@ async function loadVehicle() {
     triangles,
     meshes,
   };
+  app.backend = navigator.gpu ? 'WEBGPU-CAPABLE / WEBGL' : 'WEBGL';
+  app.webgpu = Boolean(navigator.gpu);
 
   setLoad(0.93, 'DEPLOYING TARGET BATTERY');
   range = createRange({
     scene,
     vehicleScene: gltf.scene,
     terrainHeight,
+    environment,
+    onEnemyFire: handleEnemyFire,
+    onArtillery: handleArtillery,
+    onSmoke: handleSmokeEvent,
+    onEvent: handleRangeEvent,
   });
 
   setLoad(0.99, 'ALIGNING FIRE CONTROL');
@@ -663,6 +788,38 @@ function resetTank(snapCamera = false) {
   shake.fov = 0;
   gun.lasedRange = 0;
   gun.lasedTimer = 0;
+  gun.lasedTarget = null;
+  gun.trackedTarget = null;
+  gun.solution = 0;
+  gun.solutionTimer = 0;
+  gun.armed = false;
+  gun.barrelHeat = 0;
+  gun.barrelWear = 0;
+  gun.zeroError = 0;
+  gun.reloadStage = 0;
+  crewState.role = 'EXTERNAL';
+  crewState.sight = 'DAY';
+  crewState.thermalPolarity = 1;
+  crewState.zoom = 1;
+  crewState.buttoned = false;
+  crewState.photoMode = false;
+  for (const key of Object.keys(systems)) systems[key] = 100;
+  repair = { module: null, timer: 0, total: 0 };
+  damageFlash = 0;
+  warningTimer = 0;
+  mgCooldown = 0;
+  mgShots = 0;
+  enemyShots = 0;
+  artilleryShots = 0;
+  missionWave = 1;
+  missionKills = 0;
+  objective = INITIAL_OBJECTIVE;
+  range?.reset();
+  clearEnemyProjectiles();
+  artilleryQueue.length = 0;
+  post?.setDamage(0);
+  post?.setSight(0, 1);
+  document.body.classList.remove('photo-mode', 'is-buttoned', 'sight-thermal', 'sight-night');
   aimHasSolution = false;
   pointer.dirty = true;
   lastSunX = Infinity;
@@ -710,30 +867,53 @@ function updateMotion(dt) {
   const steer = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
   const boost = keys.has('ShiftLeft') || keys.has('ShiftRight');
   const braking = keys.has('Space');
+  const engineFactor = clamp(systems.engine / 100, 0.08, 1);
+  const trackFactor = clamp(systems.tracks / 100, 0.2, 1);
+  const traction = clamp(1 - environment.state.wet * 0.14 - environment.state.snow * 0.24 - environment.state.dust * 0.08, 0.55, 1);
+  const maxForward = (boost ? 18.5 : 13.8) * engineFactor * trackFactor * traction;
 
-  if (braking) {
+  if (repair.module) {
+    tank.speed = moveToward(tank.speed, 0, 8 * dt);
+  } else if (braking) {
     tank.speed = moveToward(tank.speed, 0, 13 * dt);
   } else if (throttle > 0) {
-    tank.speed = moveToward(tank.speed, boost ? 18.5 : 13.8, (boost ? 6.2 : 4.1) * dt);
+    tank.speed = moveToward(tank.speed, maxForward, (boost ? 6.2 : 4.1) * engineFactor * traction * dt);
   } else if (throttle < 0) {
-    tank.speed = moveToward(tank.speed, -4.6, 3.1 * dt);
+    tank.speed = moveToward(tank.speed, -4.6 * engineFactor * trackFactor, 3.1 * engineFactor * dt);
   } else {
     tank.speed = moveToward(tank.speed, 0, 1.65 * dt);
   }
+  tank.rpm = damp(tank.rpm, Math.abs(tank.speed) / 18.5, 4.5, dt);
+  tank.gear = tank.speed > 0.25 ? 'D' : tank.speed < -0.25 ? 'R' : 'N';
 
   forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
   const ahead = terrainHeight(tank.x + forward.x * 2.9, tank.z + forward.z * 2.9);
   const behind = terrainHeight(tank.x - forward.x * 2.9, tank.z - forward.z * 2.9);
   tank.grade = (ahead - behind) / 5.8;
-  tank.speed -= tank.grade * 9.81 * 0.32 * dt;
+  tank.speed -= tank.grade * 9.81 * 0.32 * dt * (1 - systems.stabilizer / 220);
   tank.speed = clamp(tank.speed, -6.5, 21);
 
   const speedFactor = Math.min(Math.abs(tank.speed) / 9, 1);
-  tank.heading += steer * (0.62 + 0.44 * speedFactor) * dt;
+  tank.heading += steer * (0.62 + 0.44 * speedFactor) * trackFactor * dt;
   forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
 
   tank.x += forward.x * tank.speed * dt;
   tank.z += forward.z * tank.speed * dt;
+
+  tank.impactCooldown = Math.max(0, tank.impactCooldown - dt);
+  if (tank.impactCooldown <= 0 && Math.abs(tank.speed) > 3.2 && range) {
+    for (const structure of range.destructibles) {
+      if (!structure.alive) continue;
+      const distance = Math.hypot(tank.x - structure.position.x, tank.z - structure.position.z);
+      if (distance < 3.1) {
+        tank.impactCooldown = 1.2;
+        tank.speed *= -0.18;
+        applyPlayerDamage({ damage: 12, kind: 'COLLISION', module: 'tracks' });
+        showNotice('COLLISION · HULL DAMAGE', 900);
+        break;
+      }
+    }
+  }
 
   let atLimit = false;
   if (tank.x < -RANGE_LIMIT) { tank.x = -RANGE_LIMIT; atLimit = true; }
@@ -801,6 +981,9 @@ function updateMotion(dt) {
     tankRoot.localToWorld(localPoint);
     fx.exhaust(localPoint, tank.speed);
   }
+
+  playerVelocity.copy(tankRoot.position).sub(lastPlayerPosition).divideScalar(Math.max(dt, 0.0001));
+  lastPlayerPosition.copy(tankRoot.position);
 }
 
 function solveElevation(distance, velocity) {
@@ -880,6 +1063,12 @@ function updateAim(dt) {
     aimSolveCooldown = 1 / 30;
   }
 
+  if (gun.trackedTarget?.alive) {
+    gun.trackedTarget.getAimPoint(aimPoint);
+    const range = aimPoint.distanceTo(tankRoot.position);
+    aimPoint.addScaledVector(gun.trackedTarget.velocity, Math.min(2.4, range / Math.max(180, SHELLS[gun.selected].velocity)));
+  }
+
   let dx = aimPoint.x - tank.x;
   let dz = aimPoint.z - tank.z;
   const distance = Math.hypot(dx, dz);
@@ -889,7 +1078,8 @@ function updateAim(dt) {
   }
   const desiredWorld = Math.atan2(-dx, -dz);
   const desiredLocal = wrapAngle(desiredWorld - tank.heading);
-  tank.turretYaw = approachAngle(tank.turretYaw, desiredLocal, 2.35 * dt);
+  const slew = (1.35 + 1.05 * (systems.turret / 100) + 0.22 * (systems.stabilizer / 100)) * dt;
+  tank.turretYaw = approachAngle(tank.turretYaw, desiredLocal, slew);
 
   turretPivot.rotation.y = tank.turretYaw;
   turretPivot.updateMatrixWorld(true);
@@ -897,11 +1087,17 @@ function updateAim(dt) {
   turretPivot.getWorldQuaternion(turretWorldQuaternion).invert();
   aimDirection.copy(aimPoint).sub(barrelWorldPosition).normalize().applyQuaternion(turretWorldQuaternion);
   const spec = SHELLS[gun.selected];
-  const ballistic = gun.lasedTimer > 0 && gun.lasedRange > 20
-    ? solveElevation(gun.lasedRange, spec.velocity)
-    : 0;
-  const desiredPitch = clamp(Math.atan2(aimDirection.y, -aimDirection.z) + ballistic, -0.12, 0.27);
-  tank.gunPitch = damp(tank.gunPitch, desiredPitch, 11, dt);
+  // The FCS solution comes from the worker after a lase. If it has expired,
+  // fall back to the fast local solver rather than silently aiming flat.
+  const ballistic = gun.solutionTimer > 0 && gun.lasedRange > 20
+    ? gun.solution
+    : gun.lasedRange > 20 ? solveElevation(gun.lasedRange, spec.velocity) : 0;
+  const movingDrift = (1 - systems.stabilizer / 100) * Math.sin(performance.now() * 0.0007) * 0.0022
+    + Math.abs(tank.speed) * (1 - systems.stabilizer / 100) * 0.0014;
+  const cant = tank.grade * 0.022 + terrainHeight(tank.x, tank.z) * 0.00004;
+  const desiredPitch = clamp(Math.atan2(aimDirection.y, -aimDirection.z) + ballistic + gun.zeroError + movingDrift + cant, -0.12, 0.27);
+  const pitchRate = 6 + 7 * (systems.gun / 100);
+  tank.gunPitch = damp(tank.gunPitch, desiredPitch, pitchRate, dt);
 }
 
 function applyVisuals() {
@@ -912,6 +1108,17 @@ function applyVisuals() {
       barrelPivot.position.copy(barrelRestPosition);
       barrelPivot.position.z += recoil.barrel;
     }
+  }
+  if (environment) {
+    fx?.setWind(environment.wind);
+    post?.setEnvironment({
+      mirage: crewState.sight === 'THERMAL' ? 0 : clamp(gun.barrelHeat * 0.35 + environment.state.tempC / 50, 0, 0.8),
+      rain: environment.state.rain,
+      snow: environment.state.snow,
+      dust: environment.state.dust,
+      wet: environment.state.wet,
+      glare: clamp(environment.state.sunDirection.y * 0.28, 0, 0.25),
+    });
   }
 }
 
@@ -973,6 +1180,53 @@ function updateReticles() {
 
 function updateCamera(dt, snap = false) {
   if (!camera) return;
+  if (crewState.photoMode) {
+    cameraRig.yawOffset += dt * 0.035;
+    back.set(Math.sin(tank.heading + cameraRig.yawOffset), 0, Math.cos(tank.heading + cameraRig.yawOffset));
+    desiredCamera.set(tank.x, tank.y + 2.4, tank.z).addScaledVector(back, 13).addScaledVector(up, 4.2);
+    camera.position.lerp(desiredCamera, 1 - Math.exp(-2.4 * dt));
+    camera.lookAt(tank.x, tank.y + 1.6, tank.z);
+    camera.fov = 44;
+    camera.updateProjectionMatrix();
+    stableCameraPosition.copy(camera.position);
+    aimCamera.position.copy(camera.position);
+    aimCamera.quaternion.copy(camera.quaternion);
+    aimCamera.fov = camera.fov;
+    aimCamera.aspect = camera.aspect;
+    aimCamera.updateProjectionMatrix();
+    aimCamera.updateMatrixWorld(true);
+    return;
+  }
+
+  if (crewState.role !== 'EXTERNAL') {
+    forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
+    if (crewState.role === 'GUNNER') {
+      tankRoot.localToWorld(tmpVector.set(0, 2.05, -0.35));
+      camera.position.lerp(tmpVector, snap ? 1 : 1 - Math.exp(-7 * dt));
+      cameraLook.copy(aimPoint);
+      camera.fov = damp(camera.fov, 52 / crewState.zoom, 5, dt);
+    } else if (crewState.role === 'COMMANDER') {
+      tankRoot.localToWorld(tmpVector.set(0, 3.05, 0.15));
+      camera.position.lerp(tmpVector, snap ? 1 : 1 - Math.exp(-7 * dt));
+      cameraLook.copy(aimPoint);
+      camera.fov = damp(camera.fov, 42 / crewState.zoom, 5, dt);
+    } else {
+      tankRoot.localToWorld(tmpVector.set(0, 1.15, -2.8));
+      camera.position.lerp(tmpVector, snap ? 1 : 1 - Math.exp(-7 * dt));
+      cameraLook.set(tank.x, tank.y + 1.1, tank.z).addScaledVector(forward, 30);
+      camera.fov = damp(camera.fov, 68 / crewState.zoom, 5, dt);
+    }
+    camera.lookAt(cameraLook);
+    stableCameraPosition.copy(camera.position);
+    aimCamera.position.copy(camera.position);
+    aimCamera.quaternion.copy(camera.quaternion);
+    aimCamera.fov = camera.fov;
+    aimCamera.aspect = camera.aspect;
+    aimCamera.updateProjectionMatrix();
+    aimCamera.updateMatrixWorld(true);
+    return;
+  }
+
   back.set(
     Math.sin(tank.heading + cameraRig.yawOffset),
     0,
@@ -1115,9 +1369,17 @@ function makeTracer(spec) {
 }
 
 function fire() {
-  if (!app.ready || !barrelPivot) return;
+  if (!app.ready || !barrelPivot || crewState.photoMode) return;
   if (gun.reload > 0) {
     showNotice(`LOADING ${gun.reload.toFixed(1)}S`, 900);
+    return;
+  }
+  if (repair.module) {
+    showNotice(`CREW REPAIRING ${repair.module.toUpperCase()}`, 900);
+    return;
+  }
+  if (systems.gun <= 0) {
+    showNotice('GUN DISABLED · REPAIR REQUIRED', 1100);
     return;
   }
   if (!audio.muted) audio.unlock();
@@ -1129,36 +1391,67 @@ function fire() {
   muzzlePosition.copy(muzzleBase).addScaledVector(gunDirection, 5.9);
 
   const spec = SHELLS[gun.selected];
-  shotDirection.copy(gunDirection);
-  const dispersion = 0.00075 + Math.abs(tank.speed) * 0.000045;
-  shotDirection.x += (Math.random() - 0.5) * dispersion;
-  shotDirection.y += (Math.random() - 0.5) * dispersion;
-  shotDirection.z += (Math.random() - 0.5) * dispersion;
-  shotDirection.normalize();
+  const heatPenalty = clamp(gun.barrelHeat * 0.011 + gun.barrelWear * 0.7, 0, 0.24);
+  const modulePenalty = 1 - systems.gun / 100;
+  const dispersion = 0.00075 + Math.abs(tank.speed) * 0.000045 + heatPenalty * 0.004 + modulePenalty * 0.006;
+  const fuse = FUSES[fuseIndex];
+  const dudChance = clamp(gun.barrelWear * 0.11 + (systems.gun < 35 ? 0.04 : 0), 0, 0.22);
+  const dud = Math.random() < dudChance;
+  const pelletCount = spec.pellets || 1;
+  const velocityScale = (1 + (environment.state.tempC - 18) * 0.00035) * (1 - gun.barrelWear * 0.28);
+  const guidedTarget = spec.guided ? (gun.trackedTarget || gun.lasedTarget) : null;
+  let firstTracer = null;
 
-  forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
-  shotVelocity.copy(shotDirection).multiplyScalar(spec.velocity).addScaledVector(forward, tank.speed * 0.25);
-  const tracer = makeTracer(spec);
-  tracer.group.position.copy(muzzlePosition);
-  tracer.group.quaternion.setFromUnitVectors(forwardFromGun, shotVelocity.clone().normalize());
-
-  projectiles.push({
-    position: muzzlePosition.clone(),
-    previous: muzzlePosition.clone(),
-    velocity: shotVelocity.clone(),
-    life: 7.5,
-    spec,
-    tracer,
-  });
+  for (let pellet = 0; pellet < pelletCount; pellet++) {
+    shotDirection.copy(gunDirection);
+    const pelletSpread = dispersion * (pelletCount > 1 ? 5.5 : 1);
+    shotDirection.x += (Math.random() - 0.5) * pelletSpread;
+    shotDirection.y += (Math.random() - 0.5) * pelletSpread + gun.zeroError;
+    shotDirection.z += (Math.random() - 0.5) * pelletSpread;
+    shotDirection.normalize();
+    forward.set(-Math.sin(tank.heading), 0, -Math.cos(tank.heading));
+    shotVelocity.copy(shotDirection).multiplyScalar(spec.velocity * velocityScale).addScaledVector(forward, tank.speed * 0.25);
+    const tracer = makeTracer(spec);
+    tracer.group.position.copy(muzzlePosition);
+    tracer.group.quaternion.setFromUnitVectors(forwardFromGun, shotVelocity.clone().normalize());
+    if (!firstTracer) firstTracer = tracer;
+    projectiles.push({
+      position: muzzlePosition.clone(),
+      previous: muzzlePosition.clone(),
+      velocity: shotVelocity.clone(),
+      life: spec.guided ? 16 : 7.5,
+      spec,
+      tracer,
+      ammo: spec.id,
+      penetration: spec.penetration * (1 - gun.barrelWear * 0.34),
+      damage: spec.damage * (1 - gun.barrelWear * 0.18),
+      blast: spec.blast,
+      fuse,
+      fuseRange: gun.lasedRange,
+      dud,
+      guidedTarget,
+      guided: spec.guided,
+      age: 0,
+      source: 'player',
+    });
+  }
 
   gun.shots++;
-  gun.reload = spec.reload;
-  gun.reloadTotal = spec.reload;
+  gun.reload = spec.reload * (1 + (1 - systems.crew / 100) * 0.45);
+  gun.reloadTotal = gun.reload;
+  gun.reloadStage = 0;
   gun.cooldown = 0.28;
   gun.lastShot = performance.now();
+  gun.barrelHeat = Math.min(1.6, gun.barrelHeat + spec.heat);
+  gun.barrelWear = Math.min(1, gun.barrelWear + spec.wear * 0.05);
+  gun.zeroError = clamp(gun.zeroError + (Math.random() - 0.5) * 0.00035 + spec.wear * 0.0002, -0.012, 0.012);
+  gun.armed = false;
+  gun.solutionTimer = Math.max(0, gun.solutionTimer - 1.2);
   audio.fire(spec.id);
+  audio.crew(spec.id === 'APFSDS' ? 'Sabot, fire' : `${spec.label}, fire`);
   window.setTimeout(() => audio.reload(), 420);
   fx.muzzle(muzzlePosition, gunDirection, tankRoot.position);
+  fx.casing(muzzleBase, gunDirection);
   post.flash(0.95);
   flashScreen();
   recoil.pitchVelocity += 1.7 * spec.recoil;
@@ -1169,9 +1462,14 @@ function fire() {
   shake.fov = Math.min(2.6, shake.fov + 1.8);
   shake.kick = Math.min(1.35, shake.kick + 1);
   shake.timer = Math.min(1.4, shake.timer + 0.7);
-  gun.lasedTimer = Math.max(0, gun.lasedTimer - 0.6);
+  if (spec.smoke) {
+    const point = muzzlePosition.clone().addScaledVector(gunDirection, 18);
+    point.y = terrainHeight(point.x, point.z) + 0.7;
+    handleSmokeEvent(point, 10, 12);
+  }
   updateAmmoUi();
   updateHud(0);
+  if (!gun.solutionTimer) showNotice('UNSOLVED SHOT · LASE FOR FCS', 1100);
 }
 
 function lase() {
@@ -1183,17 +1481,19 @@ function lase() {
   gunDirection.copy(forwardFromGun).applyQuaternion(targetQuaternion).normalize();
   muzzlePosition.copy(muzzleBase).addScaledVector(gunDirection, 5.9);
 
-  raycaster.setFromCamera(pointer.ndc, camera);
+  raycaster.setFromCamera(pointer.ndc, aimCamera);
   raycaster.near = 0;
   raycaster.far = 1200;
   const targetHits = raycaster.intersectObjects(range.colliders, false);
   let point = null;
   let targetName = '';
+  let target = null;
   for (const hit of targetHits) {
-    const target = hit.object.userData.target;
-    if (!target || !target.alive) continue;
+    const unit = hit.object.userData.target;
+    if (!unit || !unit.alive) continue;
     point = hit.point;
-    targetName = target.name;
+    target = unit;
+    targetName = unit.name;
     break;
   }
   if (!point) {
@@ -1202,18 +1502,249 @@ function lase() {
   }
   if (!point) {
     showNotice('LASER · NO RETURN', 1100);
+    audio.laser();
     return;
   }
-  gun.lasedRange = point.distanceTo(tankRoot.position);
+  const smoke = environment.smokeAt(point);
+  if (smoke > 0.84 && Math.random() < 0.38) {
+    showNotice('LASER · ATTENUATED · NO RETURN', 1200);
+    audio.laser();
+    return;
+  }
+  const attenuation = 1 + smoke * (Math.random() * 0.035);
+  gun.lasedRange = point.distanceTo(tankRoot.position) * attenuation;
   gun.lasedTimer = 8;
+  gun.lasedTarget = target;
+  gun.armed = true;
+  gun.solution = solveElevation(gun.lasedRange, SHELLS[gun.selected].velocity);
+  gun.solutionTimer = 8;
   audio.laser();
   fx.laserBeam?.(muzzlePosition, point);
   showNotice(
     targetName
-      ? `LASER ${Math.round(gun.lasedRange)}M · ${targetName} · FCS SOLVED`
-      : `LASER ${Math.round(gun.lasedRange)}M · FCS SOLVED`,
+      ? `LASER ${Math.round(gun.lasedRange)}M · ${targetName} · FCS ${smoke > 0.3 ? 'PARTIAL' : 'SOLVED'}`
+      : `LASER ${Math.round(gun.lasedRange)}M · FCS ${smoke > 0.3 ? 'PARTIAL' : 'SOLVED'}`,
     1400,
   );
+  audio.crew(smoke > 0.3 ? 'Lase partial, gunner' : 'Lased, target');
+  ballistics.solveElevationAsync(gun.lasedRange, SHELLS[gun.selected].velocity, SHELLS[gun.selected].drag, environment.wind).then((solution) => {
+    if (solution != null && gun.lasedRange > 20) {
+      gun.solution = solution;
+      gun.solutionTimer = 8;
+    }
+  });
+}
+
+function backupRange() {
+  if (!app.ready || !range) return;
+  raycaster.setFromCamera(pointer.ndc, aimCamera);
+  const groundHits = raycaster.intersectObject(terrain.ground, false);
+  const targetHits = raycaster.intersectObjects(range.colliders, false);
+  const point = targetHits[0]?.point || groundHits[0]?.point;
+  if (!point) {
+    showNotice('OPTICAL RANGEFINDER · NO RETURN', 1100);
+    return;
+  }
+  const trueRange = point.distanceTo(tankRoot.position);
+  const error = trueRange * (0.012 + Math.abs(systems.optics - 100) * 0.0004);
+  gun.lasedRange = trueRange + (Math.random() - 0.5) * 2 * error;
+  gun.lasedTimer = 6;
+  gun.armed = true;
+  gun.solution = solveElevation(gun.lasedRange, SHELLS[gun.selected].velocity);
+  gun.solutionTimer = 6;
+  showNotice(`OPTICAL ${Math.round(gun.lasedRange)}M · ±${Math.max(1, Math.round(error))}M`, 1400);
+  audio.ready();
+}
+
+function designateTarget() {
+  if (!app.ready || !range) return;
+  let target = gun.lasedTarget;
+  if (!target?.alive) {
+    const hits = raycaster.setFromCamera(pointer.ndc, aimCamera).intersectObjects(range.colliders, false);
+    target = hits.find((hit) => hit.object.userData.target?.alive)?.object.userData.target || null;
+  }
+  if (!target) {
+    showNotice('NO TARGET TO HAND OFF', 900);
+    return;
+  }
+  gun.trackedTarget = target;
+  gun.lasedTarget = target;
+  gun.lasedRange = target.getAimPoint(tmpVector).distanceTo(tankRoot.position);
+  gun.lasedTimer = 12;
+  gun.solutionTimer = 12;
+  gun.armed = true;
+  showNotice(`COMMANDER HANDOFF · ${target.name} · TRACKING`, 1400);
+  audio.crew('Target handed off');
+}
+
+function cycleSight() {
+  const index = SIGHTS.indexOf(crewState.sight);
+  crewState.sight = SIGHTS[(index + 1) % SIGHTS.length];
+  document.body.classList.toggle('sight-thermal', crewState.sight === 'THERMAL');
+  document.body.classList.toggle('sight-night', crewState.sight === 'NIGHT');
+  post.setSight(crewState.sight === 'THERMAL' ? 1 : crewState.sight === 'NIGHT' ? 2 : 0, crewState.thermalPolarity);
+  showNotice(`SIGHT · ${crewState.sight}${crewState.sight === 'THERMAL' ? ` · ${crewState.thermalPolarity > 0 ? 'WHITE HOT' : 'BLACK HOT'}` : ''}`, 1200);
+  audio.click?.();
+}
+
+function cyclePolarity() {
+  crewState.thermalPolarity *= -1;
+  post.setSight(crewState.sight === 'THERMAL' ? 1 : crewState.sight === 'NIGHT' ? 2 : 0, crewState.thermalPolarity);
+  showNotice(`THERMAL · ${crewState.thermalPolarity > 0 ? 'WHITE HOT' : 'BLACK HOT'}`, 1000);
+}
+
+function cycleFuse() {
+  fuseIndex = (fuseIndex + 1) % FUSES.length;
+  showNotice(`FUZE · ${FUSES[fuseIndex]}`, 1000);
+  updateAmmoUi();
+}
+
+function cycleRole() {
+  const index = CREW_ROLES.indexOf(crewState.role);
+  crewState.role = CREW_ROLES[(index + 1) % CREW_ROLES.length];
+  document.body.classList.toggle('role-gunner', crewState.role === 'GUNNER');
+  document.body.classList.toggle('role-commander', crewState.role === 'COMMANDER');
+  document.body.classList.toggle('role-driver', crewState.role === 'DRIVER');
+  showNotice(`CREW · ${crewState.role}`, 900);
+}
+
+function toggleButtoned() {
+  crewState.buttoned = !crewState.buttoned;
+  document.body.classList.toggle('is-buttoned', crewState.buttoned);
+  showNotice(crewState.buttoned ? 'HATCHES CLOSED · BUTTONED UP' : 'HATCHES OPEN · UNBUTTONED', 1000);
+  audio.crew(crewState.buttoned ? 'Buttoned up' : 'Hatches open');
+}
+
+function cycleWeather() {
+  const label = environment.cycle();
+  showNotice(`WEATHER · ${label}`, 1300);
+  audio.radio(label === 'SANDSTORM' ? 'Sandstorm, reduce speed' : `Weather ${label}`);
+}
+
+function startRepair() {
+  if (repair.module) {
+    showNotice(`REPAIRING ${repair.module.toUpperCase()} ${Math.round(repair.timer / repair.total * 100)}%`, 900);
+    return;
+  }
+  let worst = null;
+  let health = 70;
+  for (const [key, value] of Object.entries(systems)) {
+    if (key === 'crew' || key === 'fuel') continue;
+    if (value < health) {
+      health = value;
+      worst = key;
+    }
+  }
+  if (!worst) {
+    showNotice('NO DAMAGE TO REPAIR', 900);
+    return;
+  }
+  repair = { module: worst, timer: 7.5, total: 7.5 };
+  showNotice(`DAMAGE CONTROL · ${worst.toUpperCase()}`, 1100);
+  audio.crew(`Repairing ${worst}`);
+}
+
+function updateRepair(dt) {
+  if (!repair.module) return;
+  repair.timer -= dt;
+  if (Math.floor(repair.timer * 2) !== Math.floor((repair.timer + dt) * 2)) audio.repairTick();
+  if (repair.timer > 0) return;
+  systems[repair.module] = Math.min(100, systems[repair.module] + 58);
+  if (systems[repair.module] > 92) systems[repair.module] = 100;
+  showNotice(`${repair.module.toUpperCase()} · REPAIR COMPLETE`, 1200);
+  audio.ready();
+  repair = { module: null, timer: 0, total: 0 };
+}
+
+function applyPlayerDamage({ damage = 10, kind = 'CANNON', module = null, source = null }) {
+  if (!app.ready || crewState.photoMode) return;
+  const targetModule = module || (Math.random() < 0.34 ? 'engine' : Math.random() < 0.56 ? 'tracks' : Math.random() < 0.7 ? 'optics' : 'crew');
+  const armorFactor = crewState.buttoned ? 0.72 : 1;
+  systems[targetModule] = clamp(systems[targetModule] - damage * armorFactor, 0, 100);
+  if (targetModule === 'tracks') systems.stabilizer = clamp(systems.stabilizer - damage * 0.2, 0, 100);
+  if (targetModule === 'crew') systems.crew = clamp(systems.crew - damage * 0.22, 0, 100);
+  damageFlash = 1;
+  warningTimer = 2.5;
+  if (source) {
+    warningAngle = Math.atan2(source.x - tank.x, source.z - tank.z);
+    damageAngle = warningAngle;
+  }
+  if (ui.damageArcs) ui.damageArcs.classList.add('is-visible');
+  post.setDamage(Math.min(1, 0.34 + (1 - systems.crew / 100) * 0.6));
+  shake.amount = Math.min(0.8, shake.amount + 0.28);
+  shake.kick = Math.min(1.2, shake.kick + 0.7);
+  audio.damage();
+  audio.crew(targetModule === 'crew' ? 'Crew hit!' : 'We are hit!', 0.2);
+  showNotice(`${kind} HIT · ${targetModule.toUpperCase()} DAMAGE`, 1200);
+  if (systems.crew <= 0) {
+    systems.crew = 6;
+    showNotice('CREW SHOCK · ACTION SLOWED', 1600);
+  }
+  if (systems.tracks <= 0) tank.speed *= 0.2;
+}
+
+function updateCombatTimers(dt) {
+  damageFlash = Math.max(0, damageFlash - dt * 1.8);
+  warningTimer = Math.max(0, warningTimer - dt);
+  mgCooldown = Math.max(0, mgCooldown - dt);
+  gun.barrelHeat = Math.max(0, gun.barrelHeat - dt * 0.055);
+  gun.barrelWear = Math.min(1, gun.barrelWear + dt * 0.000005);
+  if (gun.solutionTimer > 0) gun.solutionTimer = Math.max(0, gun.solutionTimer - dt);
+  if (gun.lasedTimer > 0) {
+    gun.lasedTimer = Math.max(0, gun.lasedTimer - dt);
+    if (gun.lasedTimer <= 0) {
+      gun.lasedRange = 0;
+      gun.lasedTarget = null;
+    }
+  }
+  if (gun.reload > 0) {
+    const previousStage = gun.reloadStage;
+    gun.reloadStage = gun.reloadTotal > 0 ? 1 - gun.reload / gun.reloadTotal : 1;
+    if (previousStage < 0.48 && gun.reloadStage >= 0.48) audio.reload();
+  }
+  if (damageFlash > 0.2) {
+    ui.damageFlash.classList.add('is-on');
+  } else {
+    ui.damageFlash.classList.remove('is-on');
+  }
+  if (warningTimer <= 0) ui.damageArcs?.classList.remove('is-visible');
+  if (systems.fuel < 12 && Math.random() < dt * 3) {
+    localPoint.set(0, 1.2, 2.5);
+    tankRoot?.localToWorld(localPoint);
+    fx.exhaust(localPoint, 0);
+    fx.smokeScreen(localPoint, 3, 4);
+  }
+  updateRepair(dt);
+}
+
+function fireMG() {
+  if (!app.ready || mgCooldown > 0 || gun.reload > 0 || crewState.photoMode) return;
+  mgCooldown = 0.09;
+  applyVisuals();
+  tankRoot.updateMatrixWorld(true);
+  barrelPivot.getWorldPosition(muzzleBase);
+  barrelPivot.getWorldQuaternion(targetQuaternion);
+  gunDirection.copy(forwardFromGun).applyQuaternion(targetQuaternion).normalize();
+  muzzlePosition.copy(muzzleBase).addScaledVector(gunDirection, 5.9);
+  const spec = { id: 'MG', label: 'MG', velocity: 920, drag: 0.00018, damage: 5, penetration: 18, blast: 0.2, tracer: 0xffe0a0, color: 0xd7a15b, hint: '' };
+  const count = 1;
+  for (let i = 0; i < count; i++) {
+    shotDirection.copy(gunDirection);
+    shotDirection.x += (Math.random() - 0.5) * 0.005;
+    shotDirection.y += (Math.random() - 0.5) * 0.005;
+    shotVelocity.copy(shotDirection).multiplyScalar(spec.velocity);
+    const tracer = makeTracer(spec);
+    tracer.group.position.copy(muzzlePosition);
+    tracer.group.quaternion.setFromUnitVectors(forwardFromGun, shotVelocity.clone().normalize());
+    projectiles.push({
+      position: muzzlePosition.clone(), previous: muzzlePosition.clone(), velocity: shotVelocity.clone(),
+      life: 4, spec, tracer, ammo: 'MG', penetration: 18, damage: 5, blast: 0.2, fuse: 'IMPACT', dud: false, age: 0, source: 'player',
+    });
+  }
+  mgShots++;
+  audio.mg();
+  post.flash(0.2);
+  shake.amount = Math.min(0.1, shake.amount + 0.015);
 }
 
 function removeProjectile(index) {
@@ -1255,11 +1786,11 @@ function showScorePopup(points, worldPosition, killed, label) {
   while (ui.popups.children.length > 6) ui.popups.firstElementChild.remove();
 }
 
-function addFeed(label, points, killed) {
+function addFeed(label, points, killed, detail = '') {
   if (!ui.feed) return;
   const row = document.createElement('div');
   row.className = `feed__row${killed ? ' is-kill' : ''}`;
-  row.innerHTML = `<span>${killed ? 'TARGET DOWN' : 'HIT'}</span><b>${label}</b><em>+${points}</em>`;
+  row.innerHTML = `<span>${killed ? 'TARGET DOWN' : 'HIT'}</span><b>${label}${detail ? ` · ${detail}` : ''}</b><em>+${points}</em>`;
   ui.feed.prepend(row);
   window.setTimeout(() => row.remove(), 4200);
   while (ui.feed.children.length > 4) ui.feed.lastElementChild.remove();
@@ -1267,58 +1798,169 @@ function addFeed(label, points, killed) {
 
 function registerHit(target, point, normal, zone, projectile) {
   const spec = projectile.spec;
-  const damage = spec.damage + (zone === 'turret' ? 24 : 0);
-  const result = target.hit(damage);
+  const direction = tmpVector.copy(projectile.velocity).normalize();
+  const incidence = Math.acos(clamp(Math.abs(direction.dot(normal)), 0, 1));
+  const result = target.hit({
+    zone,
+    ammo: projectile.ammo,
+    penetration: projectile.penetration,
+    damage: projectile.damage,
+    blast: projectile.blast,
+    fuse: projectile.fuse,
+    dud: projectile.dud,
+    incidence,
+  });
   if (result.ignored) return;
+  if (result.friendly) {
+    gun.combo = 0;
+    gun.comboTimer = 0;
+    gun.score = Math.max(0, gun.score - 500);
+    showNotice('FRIENDLY FIRE · −500 · CEASE FIRE', 1800);
+    audio.warning(0.5);
+    audio.crew('Check fire! Friendly!');
+    addFeed('FRIENDLY FIRE', -500, false, 'NO-FIRE TARGET');
+    updateHud(0);
+    return;
+  }
+
   gun.hits++;
-  if (result.killed) gun.kills++;
+  if (result.killed) {
+    gun.kills++;
+    missionKills++;
+  }
   gun.combo = Math.min(9, gun.combo + 1);
   gun.comboTimer = 5.4;
+  gun.lastHit = {
+    name: target.name,
+    zone: String(zone).toUpperCase(),
+    message: result.message,
+    penetrated: result.penetrated,
+    armor: result.effectiveArmor,
+    ammo: projectile.ammo,
+    distance: Math.round(point.distanceTo(tankRoot.position)),
+    damage: Math.round(result.damage),
+  };
   const multiplier = 1 + (gun.combo - 1) * 0.25;
   const distance = point.distanceTo(tankRoot.position);
-  const zoneBonus = zone === 'turret' ? 140 : zone === 'fuel' ? 90 : 0;
-  const points = Math.round((target.score + distance * 0.6 + zoneBonus) * multiplier);
+  const zoneBonus = { ammo: 260, engine: 160, optics: 145, turret: 90, track: 80, fuel: 90, crew: 60 }[zone] || 0;
+  const rawPoints = target.score + distance * 0.6 + zoneBonus;
+  const points = Math.round(rawPoints * multiplier * (result.penetrated ? 1 : 0.34));
   gun.score += points;
   if (gun.score > gun.best) {
     gun.best = gun.score;
     saveBest(gun.best);
   }
-  const destructive = target.kind === 'fuel' || target.kind === 'tank';
+  const destructive = target.kind === 'fuel' || target.kind === 'tank' || target.kind === 'hulk';
   if (result.killed && destructive) {
-    fx.explosion(point, target.kind === 'tank' ? 2.0 : 1.2);
-    audio.explosion?.(1.2);
+    fx.explosion(point, target.kind === 'tank' ? 2.1 : 1.2);
+    audio.explosion(1.2, distance);
     post.flash(0.95);
     shake.amount = Math.min(0.4, shake.amount + 0.2);
+    spawnImpact(point, normal, target.kind === 'fuel' ? 'explosion' : 'tank', 1.4);
   } else {
     spawnImpact(
       point,
       normal,
-      target.kind === 'steel' ? 'metal' : 'tank',
+      target.kind === 'steel' ? 'metal' : target.kind === 'infantry' || target.kind === 'atgm' ? 'ground' : 'tank',
       target.kind === 'steel' ? 1.1 : 1.35,
     );
   }
+  if (projectile.fuse === 'DELAY' && result.penetrated && !result.killed) {
+    window.setTimeout(() => fx.explosion(point.clone(), 0.65), 120);
+  }
+  if (projectile.ammo === 'SMOKE') handleSmokeEvent(point, 9, 12);
+  if (target.hostile && !result.killed && Math.random() < 0.22) {
+    handleSmokeEvent(target.getAimPoint(tmpVector).add(new THREE.Vector3(0, 0.4, 0)), 7, 9);
+  }
   audio.hit(result.killed);
   showHitMarker(result.killed);
-  showScorePopup(points, point, result.killed, target.name);
-  addFeed(target.name, points, result.killed);
+  showScorePopup(points, point, result.killed, `${target.name} · ${String(zone).toUpperCase()} · ${result.message}`);
+  addFeed(target.name, points, result.killed, `${String(zone).toUpperCase()} · ${result.message} · ${Math.round(result.damage)} DMG`);
+  if (result.killed && missionKills > 0 && missionKills % 4 === 0) {
+    missionWave++;
+    range?.setWave(missionWave);
+    objective = `WAVE ${missionWave} · HOLD THE RANGE`;
+    showNotice(`WAVE ${missionWave} · THREAT INCREASED`, 1800);
+    audio.radio(`Wave ${missionWave}, they are pushing`);
+  }
   updateHud(0);
+}
+
+function registerStructureHit(structure, point, normal, zone, projectile) {
+  const result = structure.hit({
+    ammo: projectile.ammo,
+    damage: projectile.damage,
+    penetration: projectile.penetration,
+    blast: projectile.blast,
+    fuse: projectile.fuse,
+  });
+  if (result.ignored) return;
+  const points = result.killed ? structure.score : Math.round(structure.score * 0.12);
+  gun.score += points;
+  spawnImpact(point, normal, 'ground', result.killed ? 1.8 : 1);
+  if (result.killed) fx.explosion(point, 1);
+  addFeed(structure.name, points, result.killed, result.message);
+  audio.hit(result.killed);
+  showScorePopup(points, point, result.killed, `${structure.name} · ${result.message}`);
 }
 
 function registerGroundImpact(point, projectile) {
   const normal = terrainNormal(point.x, point.z);
   gun.combo = 0;
   gun.comboTimer = 0;
-  spawnImpact(point, normal, 'ground', projectile.spec.blast > 4 ? 1.5 : 1);
+  if (projectile.ammo === 'SMOKE') {
+    handleSmokeEvent(point, 10, 12);
+  }
+  if (projectile.blast > 5 || projectile.fuse === 'AIRBURST') {
+    fx.explosion(point, Math.min(2, projectile.blast * 0.18));
+    audio.explosion(0.7, point.distanceTo(tankRoot.position));
+    post.flash(0.5);
+  }
+  spawnImpact(point, normal, 'ground', projectile.blast > 4 ? 1.5 : 1);
   updateHud(0);
+}
+
+function detonateAirburst(projectile) {
+  const point = projectile.position.clone();
+  fx.explosion(point, 1.3);
+  audio.explosion(0.8, point.distanceTo(tankRoot.position));
+  post.flash(0.45);
+  if (range) {
+    for (const target of range.targets) {
+      if (!target.alive || target.friendly) continue;
+      const distance = target.getAimPoint(tmpVector).distanceTo(point);
+      if (distance > 16) continue;
+      target.hit({
+        zone: 'hull',
+        ammo: projectile.ammo,
+        penetration: projectile.penetration * 0.34,
+        damage: projectile.damage * 0.32,
+        blast: projectile.blast,
+        fuse: 'AIRBURST',
+        incidence: 0.2,
+      });
+    }
+  }
 }
 
 function updateProjectiles(dt) {
   for (let index = projectiles.length - 1; index >= 0; index--) {
     const projectile = projectiles[index];
+    projectile.age = (projectile.age || 0) + dt;
     projectile.life -= dt;
+    if (projectile.guided && projectile.guidedTarget?.alive) {
+      projectile.guidedTarget.getAimPoint(tmpVector2);
+      tmpVector.copy(tmpVector2).sub(projectile.position).normalize().multiplyScalar(projectile.spec.velocity);
+      projectile.velocity.lerp(tmpVector, Math.min(1, dt * 5.5));
+    } else if (projectile.ammo === 'ATGM' && !projectile.guidedTarget) {
+      projectile.velocity.x += (Math.random() - 0.5) * 6 * dt;
+      projectile.velocity.z += (Math.random() - 0.5) * 6 * dt;
+    }
     projectile.previous.copy(projectile.position);
-    projectile.velocity.y -= 9.81 * dt;
+    projectile.velocity.y -= GRAVITY * dt;
     projectile.velocity.multiplyScalar(Math.exp(-projectile.spec.drag * dt));
+    projectile.velocity.x += environment.wind.x * 0.035 * dt;
+    projectile.velocity.z += environment.wind.z * 0.035 * dt;
     projectile.position.addScaledVector(projectile.velocity, dt);
     projectile.tracer.group.position.copy(projectile.position);
     if (projectile.velocity.lengthSq() > 0.01) {
@@ -1326,6 +1968,38 @@ function updateProjectiles(dt) {
         forwardFromGun,
         segmentDirection.copy(projectile.velocity).normalize(),
       );
+    }
+
+    if (projectile.fuse === 'AIRBURST' && projectile.age > 0.18 && projectile.fuseRange > 20) {
+      const travelled = projectile.previous.distanceTo(projectile.position);
+      if (projectile.age * projectile.spec.velocity >= projectile.fuseRange - travelled) {
+        detonateAirburst(projectile);
+        removeProjectile(index);
+        continue;
+      }
+    }
+    if (projectile.fuse === 'PROXIMITY' && projectile.age > 0.12 && range) {
+      let proximityTarget = null;
+      let proximityDistance = 8;
+      for (const target of range.targets) {
+        if (!target.alive || target.friendly) continue;
+        const distance = target.getAimPoint(tmpVector).distanceTo(projectile.position);
+        if (distance < proximityDistance) {
+          proximityDistance = distance;
+          proximityTarget = target;
+        }
+      }
+      if (proximityTarget) {
+        hitPoint.copy(projectile.position);
+        hitNormal.copy(worldUp);
+        registerHit(proximityTarget, hitPoint, hitNormal, 'hull', projectile);
+        removeProjectile(index);
+        continue;
+      }
+    }
+    if (!projectile.flyby && projectile.position.distanceTo(camera.position) < 7) {
+      projectile.flyby = true;
+      audio.flyby(projectile.position.x > tank.x ? 0.5 : -0.5);
     }
 
     segmentDirection.copy(projectile.position).sub(projectile.previous);
@@ -1338,10 +2012,11 @@ function updateProjectiles(dt) {
       let closest = null;
       const targetHits = range ? projectileRaycaster.intersectObjects(range.colliders, false) : [];
       for (const hit of targetHits) {
-        const target = hit.object.userData.target;
+        const target = range?.getTargetForObject(hit.object);
         if (!target || !target.alive) continue;
-        if (!closest || hit.distance < closest.distance) closest = { type: 'target', hit, target };
-        break;
+        if (!closest || hit.distance < closest.distance) {
+          closest = { type: hit.object.userData.destructible ? 'structure' : 'target', hit, target };
+        }
       }
       const terrainHit = projectileRaycaster.intersectObject(terrain.ground, false)[0];
       if (terrainHit && (!closest || terrainHit.distance < closest.hit.distance)) {
@@ -1353,6 +2028,8 @@ function updateProjectiles(dt) {
         hitNormal.copy(closest.hit.face?.normal || worldUp).transformDirection(closest.hit.object.matrixWorld);
         if (closest.type === 'target') {
           registerHit(closest.target, hitPoint, hitNormal, closest.hit.object.userData.zone, projectile);
+        } else if (closest.type === 'structure') {
+          registerStructureHit(closest.target, hitPoint, hitNormal, closest.hit.object.userData.zone, projectile);
         } else {
           registerGroundImpact(hitPoint, projectile);
         }
@@ -1371,6 +2048,138 @@ function updateProjectiles(dt) {
   }
 }
 
+function enemyTracer(kind) {
+  return makeTracer({
+    id: `ENEMY-${kind}`,
+    tracer: kind === 'ATGM' ? 0xff6338 : 0xffcf7a,
+    color: 0xc87842,
+  });
+}
+
+function handleEnemyFire(payload) {
+  if (!app.ready || crewState.photoMode) return;
+  const { from, target, speed = 760, damage = 50, kind = 'CANNON', guided = false, source = null } = payload;
+  const direction = tmpVector.copy(target).sub(from).normalize();
+  const tracer = enemyTracer(kind);
+  tracer.group.position.copy(from);
+  tracer.group.quaternion.setFromUnitVectors(forwardFromGun, direction.clone());
+  enemyShots++;
+  enemyProjectiles.push({
+    position: from.clone(), previous: from.clone(), velocity: direction.multiplyScalar(speed),
+    life: 12, tracer, damage, kind, guidedTarget: tankRoot.position.clone(), guided, age: 0, source,
+  });
+  const distance = from.distanceTo(tankRoot.position);
+  const pan = clamp((tmpVector2.copy(from).sub(tankRoot.position).normalize().dot(forward)), -1, 1) * 0.7;
+  if (kind === 'ATGM') audio.missile(distance, pan);
+  else audio.distantFire(distance, pan);
+  warningTimer = Math.max(warningTimer, 1.4);
+  warningAngle = Math.atan2(from.x - tank.x, from.z - tank.z);
+  showNotice(`${source?.name || 'HOSTILE'} · ${kind} INCOMING`, 900);
+}
+
+function pointToSegmentDistance(point, a, b) {
+  tmpVector.copy(b).sub(a);
+  const lengthSq = tmpVector.lengthSq();
+  if (lengthSq < 0.0001) return point.distanceTo(a);
+  const t = clamp(tmpVector2.copy(point).sub(a).dot(tmpVector) / lengthSq, 0, 1);
+  return point.distanceTo(tmpVector2.copy(a).addScaledVector(tmpVector, t));
+}
+
+function updateEnemyProjectiles(dt) {
+  const playerCenter = tmpVector2.set(tank.x, tank.y + 1.2, tank.z);
+  for (let index = enemyProjectiles.length - 1; index >= 0; index--) {
+    const projectile = enemyProjectiles[index];
+    projectile.age += dt;
+    projectile.life -= dt;
+    projectile.previous.copy(projectile.position);
+    if (projectile.guided) {
+      projectile.guidedTarget.set(tank.x, tank.y + 1.2, tank.z);
+      tmpVector.copy(projectile.guidedTarget).sub(projectile.position).normalize().multiplyScalar(260);
+      projectile.velocity.lerp(tmpVector, Math.min(1, dt * 2.3));
+    } else {
+      projectile.velocity.y -= GRAVITY * dt;
+    }
+    projectile.position.addScaledVector(projectile.velocity, dt);
+    projectile.tracer.group.position.copy(projectile.position);
+    projectile.tracer.group.quaternion.setFromUnitVectors(forwardFromGun, segmentDirection.copy(projectile.velocity).normalize());
+
+    if (pointToSegmentDistance(playerCenter, projectile.previous, projectile.position) < 3.2) {
+      applyPlayerDamage({ damage: projectile.damage, kind: projectile.kind, source: projectile.previous });
+      fx.explosion(projectile.position, projectile.kind === 'ATGM' ? 1.2 : 0.7);
+      audio.explosion(0.7, 0);
+      post.flash(0.8);
+      scene.remove(projectile.tracer.group);
+      enemyProjectiles.splice(index, 1);
+      continue;
+    }
+    const ground = terrainHeight(projectile.position.x, projectile.position.z);
+    if (projectile.position.y < ground || projectile.life <= 0) {
+      if (projectile.position.y < ground) {
+        fx.impact(projectile.position, terrainNormal(projectile.position.x, projectile.position.z), 'ground', 0.8);
+        audio.impact('ground', projectile.position.distanceTo(playerCenter));
+      }
+      scene.remove(projectile.tracer.group);
+      enemyProjectiles.splice(index, 1);
+    }
+  }
+}
+
+function clearEnemyProjectiles() {
+  for (const projectile of enemyProjectiles) scene.remove(projectile.tracer.group);
+  enemyProjectiles.length = 0;
+}
+
+function handleArtillery(point, delay = 6, source = null) {
+  artilleryShots++;
+  artilleryQueue.push({ point: point.clone(), timer: delay, source, warned: false });
+  audio.warning(0.3);
+  showNotice(source?.name ? `${source.name} · FIRE MISSION INBOUND` : 'ARTILLERY INBOUND', 1700);
+  audio.radio('Fire mission inbound');
+}
+
+function updateArtillery(dt) {
+  for (let index = artilleryQueue.length - 1; index >= 0; index--) {
+    const shell = artilleryQueue[index];
+    shell.timer -= dt;
+    if (!shell.warned && shell.timer < 2.2) {
+      shell.warned = true;
+      audio.artilleryIncoming(shell.point.distanceTo(tankRoot.position), 0.2);
+    }
+    if (shell.timer > 0) continue;
+    const impact = shell.point.clone().add(new THREE.Vector3((Math.random() - 0.5) * 14, 0, (Math.random() - 0.5) * 14));
+    impact.y = terrainHeight(impact.x, impact.z) + 0.2;
+    fx.explosion(impact, 2.2);
+    audio.explosion(1.3, impact.distanceTo(tankRoot.position), 0.2);
+    post.flash(0.8);
+    shake.amount = Math.min(0.8, shake.amount + 0.32);
+    if (impact.distanceTo(tankRoot.position) < 18) {
+      applyPlayerDamage({ damage: 42 * (1 - impact.distanceTo(tankRoot.position) / 18), kind: 'ARTILLERY', source: impact });
+    }
+    artilleryQueue.splice(index, 1);
+  }
+}
+
+function handleSmokeEvent(point, radius = 8, life = 10) {
+  environment?.addSmoke(point, radius, life);
+  fx.smokeScreen(point, radius, life);
+  if (radius > 7) showNotice('SMOKE SCREEN DEPLOYED', 1000);
+}
+
+function handleRangeEvent(type, data) {
+  if (type === 'wave') {
+    missionWave = data || missionWave;
+    objective = `WAVE ${missionWave} · HOLD THE RANGE`;
+    showNotice(`WAVE ${missionWave} · THREAT INCREASED`, 1500);
+    audio.radio(`Wave ${missionWave}, stand by`);
+  } else if (type === 'enemyFire') {
+    if (data?.name) warningTimer = Math.max(warningTimer, 0.8);
+  } else if (type === 'artillery') {
+    showNotice('OBSERVER ACTIVE · INDIRECT FIRE', 900);
+  } else if (type === 'respawn') {
+    // Keeping this silent avoids a feed spam during sustained fire.
+  }
+}
+
 function updateGunnery(dt) {
   if (gun.reload > 0) {
     const before = gun.reload;
@@ -1378,6 +2187,7 @@ function updateGunnery(dt) {
     if (before > 0 && gun.reload === 0) {
       audio.ready();
       showNotice(`${SHELLS[gun.selected].id} READY`, 700);
+      audio.crew('Up');
     }
   }
   gun.cooldown = Math.max(0, gun.cooldown - dt);
@@ -1385,17 +2195,17 @@ function updateGunnery(dt) {
     gun.comboTimer -= dt;
     if (gun.comboTimer <= 0) gun.combo = 0;
   }
-  if (gun.lasedTimer > 0) {
-    gun.lasedTimer -= dt;
-    if (gun.lasedTimer <= 0) gun.lasedRange = 0;
+  if (range) {
+    range.update(dt, tankRoot.position, playerVelocity, camera);
   }
-  if (range) range.update(dt);
   updateProjectiles(dt);
+  updateEnemyProjectiles(dt);
+  updateArtillery(dt);
 }
 
 function updateAmmoUi() {
   const spec = SHELLS[gun.selected];
-  if (ui.reticleAmmo) ui.reticleAmmo.textContent = spec.id;
+  if (ui.reticleAmmo) ui.reticleAmmo.textContent = `${spec.id} / ${FUSES[fuseIndex]}`;
   for (const chip of ui.ammoChips) {
     chip.classList.toggle('is-active', chip.dataset.shell === spec.id);
   }
@@ -1410,25 +2220,27 @@ function updateHud(dt) {
   hudElapsed = 0;
 
   const kmh = Math.round(Math.abs(tank.speed) * 3.6);
-  ui.speed.textContent = String(kmh).padStart(3, '0');
-  ui.gear.textContent = tank.speed > 0.25 ? 'D' : tank.speed < -0.25 ? 'R' : 'N';
+  if (ui.speed) ui.speed.textContent = String(kmh).padStart(3, '0');
+  if (ui.gear) ui.gear.textContent = tank.gear;
   const throttle = (keys.has('KeyW') || keys.has('KeyS')) ? 1 : 0;
-  ui.throttle.style.transform = `scaleX(${throttle})`;
-  ui.driveState.textContent = keys.has('Space')
-    ? 'BRAKE'
-    : keys.has('ShiftLeft') || keys.has('ShiftRight')
-      ? 'BOOST'
-      : tank.speed < -0.25
-        ? 'REVERSE'
-        : tank.speed > 0.25
-          ? 'DRIVE'
-          : 'IDLE';
+  if (ui.throttle) ui.throttle.style.transform = `scaleX(${throttle})`;
+  if (ui.driveState) ui.driveState.textContent = repair.module
+    ? 'REPAIR'
+    : keys.has('Space')
+      ? 'BRAKE'
+      : keys.has('ShiftLeft') || keys.has('ShiftRight')
+        ? 'BOOST'
+        : tank.speed < -0.25
+          ? 'REVERSE'
+          : tank.speed > 0.25
+            ? 'DRIVE'
+            : 'IDLE';
   const traverse = ((tank.turretYaw * 180) / Math.PI + 360) % 360;
-  ui.turret.textContent = `${String(Math.round(traverse)).padStart(3, '0')}°`;
+  if (ui.turret) ui.turret.textContent = `${String(Math.round(traverse)).padStart(3, '0')}°`;
   const elevation = (tank.gunPitch * 180) / Math.PI;
-  ui.elevation.textContent = `${elevation >= 0 ? '+' : ''}${elevation.toFixed(1)}°`;
-  ui.grade.textContent = `${tank.grade >= 0 ? '+' : ''}${(tank.grade * 100).toFixed(1)}%`;
-  ui.grid.textContent = `X ${Math.round(tank.x)} · Z ${Math.round(tank.z)}`;
+  if (ui.elevation) ui.elevation.textContent = `${elevation >= 0 ? '+' : ''}${elevation.toFixed(1)}°`;
+  if (ui.grade) ui.grade.textContent = `${tank.grade >= 0 ? '+' : ''}${(tank.grade * 100).toFixed(1)}%`;
+  if (ui.grid) ui.grid.textContent = `X ${Math.round(tank.x)} · Z ${Math.round(tank.z)}`;
 
   const spec = SHELLS[gun.selected];
   const multiplier = 1 + Math.max(0, gun.combo - 1) * 0.25;
@@ -1440,36 +2252,204 @@ function updateHud(dt) {
   }
   const reloadTotal = gun.reloadTotal || spec.reload;
   if (ui.reloadBar) ui.reloadBar.style.transform = `scaleX(${1 - clamp(gun.reload / reloadTotal, 0, 1)})`;
-  if (ui.reloadLabel) ui.reloadLabel.textContent = gun.reload > 0 ? `LOADING ${gun.reload.toFixed(1)}S` : 'READY';
+  if (ui.reloadLabel) ui.reloadLabel.textContent = gun.reload > 0 ? `${repair.module ? 'REPAIRING' : 'LOADING'} ${gun.reload.toFixed(1)}S` : 'READY';
   if (ui.rangeReadout) {
     ui.rangeReadout.textContent = gun.lasedRange > 0 ? `${Math.round(gun.lasedRange)} M` : '--- M';
     ui.rangeReadout.classList.toggle('is-solved', gun.lasedTimer > 0);
   }
+  if (ui.reloadRing) ui.reloadRing.style.setProperty('--reload', String(1 - clamp(gun.reload / reloadTotal, 0, 1)));
+
+  if (ui.sight) ui.sight.textContent = `${crewState.sight} ${crewState.sight === 'THERMAL' ? (crewState.thermalPolarity > 0 ? 'WH' : 'BH') : `${crewState.zoom}X`}`;
+  if (ui.role) ui.role.textContent = crewState.role;
+  if (ui.weather) ui.weather.textContent = environment.getState().label;
+  if (ui.wind) ui.wind.textContent = `${Math.round(environment.state.windSpeed)} M/S ${Math.round(environment.state.windAngle)}°`;
+  if (ui.temp) ui.temp.textContent = `${Math.round(environment.state.tempC)}°C`;
+  if (ui.fuse) ui.fuse.textContent = FUSES[fuseIndex];
+  if (ui.compass) ui.compass.textContent = `${String(Math.round(((-tank.heading * 180) / Math.PI + 360) % 360)).padStart(3, '0')}°`;
+  if (ui.objective) ui.objective.textContent = objective;
+  if (ui.backend) ui.backend.textContent = app.backend || 'WEBGL';
+  if (ui.tracker) {
+    ui.tracker.textContent = gun.trackedTarget?.alive ? `TRACK · ${gun.trackedTarget.name}` : 'TRACK · MANUAL';
+    ui.tracker.classList.toggle('is-locked', Boolean(gun.trackedTarget?.alive));
+  }
+  if (ui.shotFlag) ui.shotFlag.textContent = shotCameraActive ? 'SHOT CAM ON' : '';
+  if (ui.damageArcs) {
+    ui.damageArcs.style.setProperty('--damage-angle', `${damageAngle}rad`);
+    ui.damageArcs.classList.toggle('is-visible', warningTimer > 0);
+  }
+  if (ui.laserWarning) {
+    ui.laserWarning.style.setProperty('--warning-angle', `${warningAngle}rad`);
+    ui.laserWarning.classList.toggle('is-visible', warningTimer > 0);
+  }
+  for (const bar of ui.systemBars) {
+    const key = bar.dataset.system;
+    const value = systems[key] ?? 100;
+    bar.style.setProperty('--value', `${value}%`);
+    bar.classList.toggle('is-critical', value < 30);
+  }
+  if (ui.repair) {
+    ui.repair.classList.toggle('is-visible', Boolean(repair.module));
+    if (ui.repairBar) ui.repairBar.style.transform = `scaleX(${repair.total ? 1 - repair.timer / repair.total : 0})`;
+    if (ui.repairLabel) ui.repairLabel.textContent = repair.module ? `DAMAGE CONTROL · ${repair.module.toUpperCase()}` : '';
+  }
+  if (ui.perf && ui.perf.classList.contains('is-visible')) {
+    ui.perf.innerHTML = [
+      `FPS ${Math.round(fpsAverage)}  ·  FRAME ${lastFrameTime.toFixed(1)} MS`,
+      `SCALE ${renderScale.toFixed(2)}  ·  ${renderer?.info.render.calls || 0} CALLS`,
+      `TRI ${Math.round(triangles / 1000)}K  ·  PROJECTILES ${projectiles.length + enemyProjectiles.length}`,
+      `SYS E${Math.round(systems.engine)} T${Math.round(systems.tracks)} O${Math.round(systems.optics)} G${Math.round(systems.gun)}`,
+      `WIND ${environment.state.windSpeed.toFixed(1)}  ·  VIS ${environment.state.visibility.toFixed(2)}`,
+    ].join('<br>');
+  }
+  if (ui.projectileMarker && camera) {
+    const active = projectiles.find((projectile) => projectile.source === 'player') || enemyProjectiles[0];
+    if (active) {
+      screenPoint.copy(active.position).project(camera);
+      const x = (screenPoint.x * 0.5 + 0.5) * window.innerWidth;
+      const y = (-screenPoint.y * 0.5 + 0.5) * window.innerHeight;
+      ui.projectileMarker.classList.add('is-visible');
+      ui.projectileMarker.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      if (ui.projectileReadout) ui.projectileReadout.textContent = active.source === 'player' ? 'TRACK' : 'INBOUND';
+    } else {
+      ui.projectileMarker.classList.remove('is-visible');
+    }
+  }
 
   if (fpsElapsed >= 0.5) {
-    ui.fps.textContent = String(Math.round(fpsFrames / fpsElapsed));
+    const measured = fpsFrames / fpsElapsed;
+    fpsAverage = fpsAverage * 0.72 + measured * 0.28;
+    if (ui.fps) ui.fps.textContent = String(Math.round(measured));
     fpsElapsed = 0;
     fpsFrames = 0;
   }
 }
 
+let simAccumulator = 0;
+let adaptiveTimer = 0;
+let frameStart = 0;
+
+function simulate(dt) {
+  updateMotion(dt);
+  updateRecoil(dt);
+  updateAim(dt);
+  applyVisuals();
+  updateTracks(dt);
+  updateGunnery(dt);
+}
+
+function updateShotCamera() {
+  if (!shotCamera) return;
+  const projectile = projectiles[0];
+  if (projectile) {
+    tmpVector.copy(projectile.velocity).normalize();
+    shotCamera.position.copy(projectile.position).addScaledVector(tmpVector, -7).add(new THREE.Vector3(0, 2.2, 0));
+    shotCamera.lookAt(projectile.position.clone().addScaledVector(tmpVector, 22));
+  } else {
+    tankRoot.getWorldPosition(tmpVector);
+    shotCamera.position.set(tank.x, tank.y + 5.5, tank.z + 8);
+    shotCamera.lookAt(aimPoint);
+  }
+  post.setShotCamera(shotCamera, shotCameraActive);
+}
+
+function updateAdaptiveResolution(dt) {
+  adaptiveTimer += dt;
+  if (adaptiveTimer < 2.4) return;
+  adaptiveTimer = 0;
+  if (fpsAverage < 36 && renderScale > 0.58) {
+    renderScale = Math.max(0.58, renderScale - 0.05);
+    post.setRenderScale(renderScale);
+  } else if (fpsAverage > 54 && renderScale < 0.85) {
+    renderScale = Math.min(0.85, renderScale + 0.03);
+    post.setRenderScale(renderScale);
+  }
+}
+
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const rawDt = Math.min(clock.getDelta(), 0.25);
+  const dt = Math.min(rawDt, 0.2);
+  frameStart = performance.now();
+  if (environment) {
+    environment.update(dt, tankRoot?.position || tmpVector.set(0, 0, 0));
+    sunDirection.copy(environment.state.sunDirection);
+  }
+  updateSun();
   if (app.ready) {
-    updateMotion(dt);
-    updateRecoil(dt);
-    updateAim(dt);
-    applyVisuals();
-    updateTracks(dt);
-    updateGunnery(dt);
+    if (!crewState.photoMode) {
+      simAccumulator = Math.min(0.5, simAccumulator + dt);
+      let steps = 0;
+      while (simAccumulator >= 1 / 60 && steps < 24) {
+        simulate(1 / 60);
+        simAccumulator -= 1 / 60;
+        steps++;
+      }
+      updateCombatTimers(dt);
+    }
     updateCamera(dt);
     updateReticles();
     updateHud(dt);
+    updateShotCamera();
+    updateAdaptiveResolution(dt);
   }
-  updateSun();
+  if (environment) fx.setWind(environment.wind);
   fx.update(dt);
+  audio.update({
+    speed: tank.speed,
+    moving: Math.abs(tank.speed) > 0.5,
+    rpm: tank.rpm,
+    rain: environment?.state.rain || 0,
+    wind: environment?.state.windSpeed || 0,
+    buttoned: crewState.buttoned,
+    damage: 1 - systems.crew / 100,
+    repairing: Boolean(repair.module),
+    tempC: environment?.state.tempC || 18,
+  });
   post.render(dt);
+  lastFrameTime = performance.now() - frameStart;
+}
+
+function cycleZoom() {
+  const zoomLevels = [1, 4, 8];
+  const index = zoomLevels.indexOf(crewState.zoom);
+  crewState.zoom = zoomLevels[(index + 1) % zoomLevels.length];
+  showNotice(`OPTIC ZOOM · ${crewState.zoom}X`, 900);
+}
+
+function callWingman() {
+  if (!range) return;
+  const point = aimPoint.clone();
+  range.callSupport(point);
+  showNotice('WINGMAN · FIRE MISSION REQUESTED', 1400);
+  audio.radio('Wingman, fire mission');
+}
+
+function toggleShotCamera() {
+  shotCameraActive = !shotCameraActive;
+  post.setShotCamera(shotCamera, shotCameraActive);
+  showNotice(shotCameraActive ? 'SHOT CAMERA · ON' : 'SHOT CAMERA · OFF', 900);
+}
+
+function togglePerf() {
+  if (!ui.perf) return;
+  ui.perf.classList.toggle('is-visible');
+}
+
+function togglePhoto() {
+  crewState.photoMode = !crewState.photoMode;
+  document.body.classList.toggle('photo-mode', crewState.photoMode);
+  post.setPhoto(crewState.photoMode ? 1 : 0);
+  if (crewState.photoMode) {
+    keys.clear();
+    showNotice('PHOTO MODE · FREE CAMERA · O TO RESUME', 1800);
+    document.body.classList.remove('hide-hints');
+  } else {
+    cameraRig.yawOffset = 0;
+    cameraRig.pitch = 0.34;
+    cameraRig.distance = 15;
+    updateCamera(1, true);
+    showNotice('SIMULATION RESUMED', 900);
+  }
 }
 
 function selectShell(index) {
@@ -1495,6 +2475,22 @@ function bindInput() {
     }
     if (event.code === 'KeyH') document.body.classList.toggle('hide-hints');
     if (event.code === 'KeyF') lase();
+    if (event.code === 'KeyN') backupRange();
+    if (event.code === 'KeyG') designateTarget();
+    if (event.code === 'KeyV') cycleSight();
+    if (event.code === 'KeyB') cyclePolarity();
+    if (event.code === 'KeyX') cycleFuse();
+    if (event.code === 'KeyK') cycleRole();
+    if (event.code === 'KeyU') toggleButtoned();
+    if (event.code === 'KeyJ') cycleWeather();
+    if (event.code === 'KeyE') startRepair();
+    if (event.code === 'KeyQ') fireMG();
+    if (event.code === 'KeyY') callWingman();
+    if (event.code === 'KeyZ') cycleZoom();
+    if (event.code === 'KeyI') toggleShotCamera();
+    if (event.code === 'KeyP') togglePerf();
+    if (event.code === 'KeyO') togglePhoto();
+    if (event.code === 'Escape' && crewState.photoMode) togglePhoto();
     if (event.code === 'KeyM') {
       const muted = audio.toggle();
       showNotice(muted ? 'AUDIO MUTED' : 'AUDIO LIVE', 900);
@@ -1502,6 +2498,10 @@ function bindInput() {
     if (event.code === 'Digit1') selectShell(0);
     if (event.code === 'Digit2') selectShell(1);
     if (event.code === 'Digit3') selectShell(2);
+    if (event.code === 'Digit4') selectShell(3);
+    if (event.code === 'Digit5') selectShell(4);
+    if (event.code === 'Digit6') selectShell(5);
+    if (event.code === 'Digit7') selectShell(6);
   });
 
   window.addEventListener('keyup', (event) => keys.delete(event.code));
@@ -1548,7 +2548,8 @@ function bindInput() {
     audio.unlock();
     if (event.button === 0) {
       event.preventDefault();
-      fire();
+      if (event.shiftKey) fireMG();
+      else fire();
       return;
     }
     if (event.button !== 2) return;
