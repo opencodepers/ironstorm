@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createTerrain, terrainHeight, terrainNormal, RANGE_LIMIT } from './terrain.js';
+import { createNearGrass } from './grass.js';
 import { createPost } from './post.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
@@ -283,6 +284,7 @@ let renderer;
 let scene;
 let camera;
 let terrain;
+let nearGrass;
 let post;
 let fx;
 let audio;
@@ -490,6 +492,8 @@ const app = {
       parkingBrake,
       autoGear,
       quality: lowPower ? 'PHONE' : 'HIGH',
+      lushGrass: Boolean(nearGrass?.group.visible),
+      grassTiles: nearGrass?.tileCount || 0,
       gear: tank.gear,
       rpm: tank.rpm,
       smokeCharges,
@@ -972,6 +976,11 @@ function applyQualityMode() {
   }
   renderScale = 1;
   post?.setRenderScale(renderScale);
+  if (!lowPower && !nearGrass && terrain && scene) {
+    nearGrass = createNearGrass();
+    scene.add(nearGrass.group);
+  }
+  if (nearGrass) nearGrass.group.visible = !lowPower;
   document.body.classList.toggle('low-power', lowPower);
   if (ui.menuQuality) ui.menuQuality.textContent = lowPower ? 'PHONE' : 'HIGH';
   if (ui.escapeQuality) ui.escapeQuality.textContent = lowPower ? 'QUALITY PHONE' : 'QUALITY HIGH';
@@ -2589,6 +2598,7 @@ function animate() {
       updateReticles();
       updateShotCamera();
       updateAdaptiveResolution(dt);
+      nearGrass?.update(tankRoot.position, performance.now() * 0.001);
       cullTimer += dt;
       if (cullTimer >= 0.25) {
         cullTimer = 0;

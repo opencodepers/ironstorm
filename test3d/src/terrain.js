@@ -153,6 +153,25 @@ function makeGroundTextures(highDetail = false) {
   albedo.putImageData(albedoImage, 0, 0);
   rough.putImageData(roughImage, 0, 0);
 
+  // Fine blades baked into the ground map stop the gaps between 3D tufts from
+  // reading as bare dirt at camera height. The mask is deliberately subtle;
+  // it is a nap under the geometry, not a replacement for it.
+  const napRandom = seededRandom(highDetail ? 4711 : 902);
+  const napCount = highDetail ? 7600 : 2200;
+  albedo.lineCap = 'round';
+  for (let i = 0; i < napCount; i++) {
+    const x = napRandom() * size;
+    const y = napRandom() * size;
+    const height = 2 + napRandom() * (highDetail ? 11 : 7);
+    const bend = (napRandom() - 0.5) * 8;
+    albedo.strokeStyle = `hsla(${80 + napRandom() * 28}, ${32 + napRandom() * 18}%, ${32 + napRandom() * 20}%, ${0.16 + napRandom() * 0.24})`;
+    albedo.lineWidth = 0.7 + napRandom() * 1.4;
+    albedo.beginPath();
+    albedo.moveTo(x, y);
+    albedo.quadraticCurveTo(x + bend * 0.35, y - height * 0.55, x + bend, y - height);
+    albedo.stroke();
+  }
+
   const normalCanvas = document.createElement('canvas');
   normalCanvas.width = size;
   normalCanvas.height = size;
@@ -219,21 +238,24 @@ function seededRandom(seed = 1731) {
   };
 }
 
-function makeGrassTexture(size = 128) {
+export function makeGrassTexture(size = 128) {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const context = canvas.getContext('2d');
-  context.clearRect(0, 0, size, size);
+  context.fillStyle = '#000';
+  context.fillRect(0, 0, size, size);
+  context.lineCap = 'round';
   const random = seededRandom(90210);
 
-  for (let i = 0; i < 42; i++) {
-    const baseX = size * 0.5 + (random() - 0.5) * size * 0.82;
-    const height = size * (0.3 + random() * 0.66);
-    const bend = (random() - 0.5) * size * 0.28;
-    const hue = 64 + random() * 38;
-    context.strokeStyle = `hsla(${hue}, 36%, ${34 + random() * 22}%, ${0.55 + random() * 0.4})`;
-    context.lineWidth = 0.8 + random() * 1.7;
+  // Alpha mask rather than a colour map. A transparent background would bleed
+  // black into the mipmaps and turn a green field gray at distance.
+  for (let i = 0; i < 88; i++) {
+    const baseX = size * 0.5 + (random() - 0.5) * size * 0.9;
+    const height = size * (0.28 + random() * 0.7);
+    const bend = (random() - 0.5) * size * 0.34;
+    context.strokeStyle = `rgba(255, 255, 255, ${0.66 + random() * 0.34})`;
+    context.lineWidth = 0.75 + random() * 2.35;
     context.beginPath();
     context.moveTo(baseX, size);
     context.quadraticCurveTo(baseX + bend * 0.4, size - height * 0.56, baseX + bend, size - height);
@@ -241,8 +263,8 @@ function makeGrassTexture(size = 128) {
   }
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.anisotropy = 8;
   return texture;
 }
 
@@ -302,8 +324,8 @@ export function createTerrain({ lowPower = false } = {}) {
 
   const normal = geometry.getAttribute('normal');
   const colors = new Float32Array((segments + 1) * (segments + 1) * 3);
-  const meadow = new THREE.Color(0x5d7446);
-  const dryGrass = new THREE.Color(0x8b7a50);
+  const meadow = new THREE.Color(0x4f8236);
+  const dryGrass = new THREE.Color(0x748247);
   const dirt = new THREE.Color(0x725c42);
   const stone = new THREE.Color(0x77766c);
   const sand = new THREE.Color(0x927a57);
@@ -408,16 +430,15 @@ export function createTerrain({ lowPower = false } = {}) {
   group.add(markers);
 
   const grassGeometry = makeGrassGeometry();
-  const grassMaterial = new THREE.MeshStandardMaterial({
-    map: makeGrassTexture(highQuality ? 256 : 128),
-    color: 0xffffff,
-    alphaTest: 0.34,
+  const grassMaterial = new THREE.MeshBasicMaterial({
+    alphaMap: makeGrassTexture(highQuality ? 256 : 128),
+    color: 0x86b55b,
+    alphaTest: 0.3,
     side: THREE.DoubleSide,
-    roughness: 0.95,
-    metalness: 0,
-    vertexColors: true,
   });
-  const grassCount = lowPower ? 1400 : 8000;
+  // The dense near-field grass is supplied by grass.js on desktop. Keep a
+  // small static layer for distance and for the phone-only fallback.
+  const grassCount = 900;
   const grassSpan = 880;
   // Split the lawn into spatial chunks on desktop. Three can then reject the
   // chunks outside the view frustum instead of submitting all 8,000 blades.
@@ -431,15 +452,15 @@ export function createTerrain({ lowPower = false } = {}) {
   while (placed < grassCount) {
     const x = (random() - 0.5) * grassSpan;
     const z = (random() - 0.5) * grassSpan;
-    if (Math.hypot(x, z) < 17) continue;
-    if (Math.abs(x) < 18 && z < -30) continue;
+    if (Math.hypot(x, z) < 15) continue;
+    if (Math.abs(x) < 6 && z < -24) continue;
     const width = 0.7 + random() * 1.6;
     const height = 0.4 + random() * 0.9;
     dummy.position.set(x, terrainHeight(x, z) + 0.01, z);
     dummy.rotation.set(0, random() * Math.PI, 0);
     dummy.scale.set(width, height, width);
     dummy.updateMatrix();
-    grassColor.setHSL(0.16 + random() * 0.055, 0.16 + random() * 0.12, 0.48 + random() * 0.16);
+    grassColor.setHSL(0.235 + random() * 0.05, 0.3 + random() * 0.12, 0.72 + random() * 0.16);
     const cx = clamp(Math.floor((x + grassSpan * 0.5) / grassChunkSpan), 0, grassChunksPerAxis - 1);
     const cz = clamp(Math.floor((z + grassSpan * 0.5) / grassChunkSpan), 0, grassChunksPerAxis - 1);
     grassBuckets[cz * grassChunksPerAxis + cx].push({
