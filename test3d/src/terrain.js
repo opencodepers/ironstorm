@@ -403,7 +403,8 @@ export function createTerrain({ lowPower = false } = {}) {
   }
   markers.instanceMatrix.needsUpdate = true;
   markers.computeBoundingSphere();
-  markers.castShadow = true;
+  // The marker posts are too small to justify another shadow draw.
+  markers.castShadow = false;
   group.add(markers);
 
   const grassGeometry = makeGrassGeometry();
@@ -498,6 +499,14 @@ export function createTerrain({ lowPower = false } = {}) {
   rocks.castShadow = true;
   rocks.receiveShadow = true;
   group.add(rocks);
+
+  // Everything under this group is fixed in world space. Bake their local
+  // matrices once so the renderer stops recalculating them every frame.
+  group.traverse((object) => {
+    object.updateMatrix();
+    object.matrixAutoUpdate = false;
+  });
+  group.updateMatrixWorld(true);
 
   const updateCulling = (cameraPosition) => {
     if (!cameraPosition || lowPower) return;

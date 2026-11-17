@@ -231,6 +231,14 @@ let fpsAverage = 60;
 let renderScale = 1;
 let lastPlayerPosition = new THREE.Vector3();
 let lastFrameTime = 0;
+const renderStats = {
+  calls: 0,
+  triangles: 0,
+  points: 0,
+  lines: 0,
+  geometries: 0,
+  textures: 0,
+};
 const playerVelocity = new THREE.Vector3();
 const enemyProjectiles = [];
 const artilleryQueue = [];
@@ -442,7 +450,10 @@ const app = {
       triangles,
       vertices,
       meshes,
-      drawCalls: renderer?.info.render.calls || 0,
+      drawCalls: renderStats.calls,
+      frameTriangles: renderStats.triangles,
+      renderInfo: { ...renderStats },
+      memory: { geometries: renderStats.geometries, textures: renderStats.textures },
       modelSize,
       score: gun.score,
       best: gun.best,
@@ -573,8 +584,11 @@ function buildScene() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.84;
+  renderer.info.autoReset = false;
   renderer.shadowMap.enabled = !lowPower;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
 
   scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x9aa38c, 0.00082);
@@ -587,6 +601,8 @@ function buildScene() {
 
   const sky = new Sky();
   sky.scale.setScalar(5000);
+  sky.updateMatrix();
+  sky.matrixAutoUpdate = false;
   const skyUniforms = sky.material.uniforms;
   skyUniforms.turbidity.value = 3.0;
   skyUniforms.rayleigh.value = 2.0;
@@ -739,6 +755,10 @@ async function loadVehicle() {
     else missing.add(name || 'unassigned');
     child.castShadow = true;
     child.receiveShadow = true;
+    // All vehicle animation runs through the turret and barrel pivots, so the
+    // individual mesh transforms are static and do not need rebuilding.
+    child.updateMatrix();
+    child.matrixAutoUpdate = false;
 
     // The source is built triangle-by-triangle. Indexing shared vertices cuts
     // GPU vertex work substantially without touching the visual surface.
@@ -944,6 +964,7 @@ function applyQualityMode() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1 : 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = !lowPower;
+  renderer.shadowMap.needsUpdate = true;
   if (sunLight) {
     sunLight.castShadow = !lowPower;
     sunLight.shadow.mapSize.set(lowPower ? 1024 : 3072, lowPower ? 1024 : 3072);
@@ -2459,8 +2480,9 @@ function updateHud(dt) {
   if (ui.perf && ui.perf.classList.contains('is-visible')) {
     ui.perf.innerHTML = [
       `FPS ${Math.round(fpsAverage)}  ·  FRAME ${lastFrameTime.toFixed(1)} MS`,
-      `SCALE ${renderScale.toFixed(2)}  ·  ${renderer?.info.render.calls || 0} CALLS`,
-      `TRI ${Math.round(triangles / 1000)}K  ·  PROJECTILES ${projectiles.length + enemyProjectiles.length}`,
+      `SCALE ${renderScale.toFixed(2)}  ·  ${renderStats.calls} CALLS`,
+      `TRI ${Math.round(renderStats.triangles / 1000)}K  ·  PROJECTILES ${projectiles.length + enemyProjectiles.length}`,
+      `GEO ${renderStats.geometries}  ·  TEX ${renderStats.textures}`,
       `SYS E${Math.round(systems.engine)} T${Math.round(systems.tracks)} O${Math.round(systems.optics)} G${Math.round(systems.gun)}`,
       `WIND ${environment.state.windSpeed.toFixed(1)}  ·  VIS ${environment.state.visibility.toFixed(2)}`,
     ].join('<br>');
@@ -2491,6 +2513,7 @@ function updateHud(dt) {
 let simAccumulator = 0;
 let adaptiveTimer = 0;
 let cullTimer = 0;
+let shadowTimer = 0;
 let frameStart = 0;
 
 function simulate(dt) {
@@ -2537,11 +2560,19 @@ function animate() {
   const rawDt = Math.min(clock.getDelta(), 0.25);
   const dt = Math.min(rawDt, 0.2);
   frameStart = performance.now();
+  renderer.info.reset();
   if (environment && !paused) {
     environment.update(dt, tankRoot?.position || tmpVector.set(0, 0, 0));
     sunDirection.copy(environment.state.sunDirection);
   }
   updateSun();
+  if (!paused && !lowPower) {
+    shadowTimer += dt;
+    if (shadowTimer >= 1 / 30) {
+      shadowTimer = 0;
+      renderer.shadowMap.needsUpdate = true;
+    }
+  }
   if (app.ready) {
     if (!paused && !crewState.photoMode) {
       simAccumulator = Math.min(0.5, simAccumulator + dt);
@@ -2582,6 +2613,12 @@ function animate() {
   });
   post.render(dt);
   lastFrameTime = performance.now() - frameStart;
+  renderStats.calls = renderer.info.render.calls;
+  renderStats.triangles = renderer.info.render.triangles;
+  renderStats.points = renderer.info.render.points;
+  renderStats.lines = renderer.info.render.lines;
+  renderStats.geometries = renderer.info.memory.geometries;
+  renderStats.textures = renderer.info.memory.textures;
 }
 
 function cycleZoom() {

@@ -623,8 +623,17 @@ class Destructible {
   }
 }
 
+function freezeLocalMatrices(root) {
+  root.traverse((child) => {
+    if (!child.isMesh) return;
+    child.updateMatrix();
+    child.matrixAutoUpdate = false;
+  });
+}
+
 function addTarget(root, targets, colliders, target, destructibles) {
   root.add(target.group);
+  freezeLocalMatrices(target.group);
   targets.push(target);
   colliders.push(...target.colliders);
   if (destructibles) destructibles.push(target);
@@ -974,6 +983,9 @@ function createDestructible(root, destructibles, colliders, {
   collider.position.copy(mesh.position);
   root.add(mesh);
   root.add(collider);
+  freezeLocalMatrices(mesh);
+  collider.updateMatrix();
+  collider.matrixAutoUpdate = false;
   const destructible = new Destructible({ name, mesh, collider, health, score, position: mesh.position });
   colliders.push(collider);
   destructibles.push(destructible);
@@ -1133,6 +1145,9 @@ export function createRange({
     board.position.set(0, 1.88, 0.03);
     board.castShadow = true;
     group.add(board);
+    group.updateMatrix();
+    group.matrixAutoUpdate = false;
+    freezeLocalMatrices(group);
     root.add(group);
   };
   createDistanceSign(24, -110, 100);
