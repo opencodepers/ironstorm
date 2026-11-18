@@ -1848,6 +1848,16 @@ body:not(.role-gunner):not(.role-commander) .reticle__mg {
   text-align: right;
 }
 
+.escape__net-roster {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 7px;
+  line-height: 1.65;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .menu-systems {
   display: grid;
   gap: 5px;

@@ -8,6 +8,8 @@ import { createPost } from './post.js';
 import { createFx } from './fx.js';
 import { createAudio } from './audio.js';
 import { createRange } from './range.js';
+import { createRangeProps } from './rangeProps.js';
+import { createRangeNet } from './net.js';
 import { createEnvironment, createBallistics, GRAVITY } from './sim.js';
 
 const $ = (id) => document.getElementById(id);
@@ -62,6 +64,7 @@ const ui = {
   projectileMarker: $('projectile-marker'),
   projectileReadout: $('projectile-readout'),
   perf: $('perf'),
+  netStatus: $('net-status'),
   reloadRing: $('reload-ring'),
   shotFlag: $('shot-flag'),
   backend: $('backend'),
@@ -88,6 +91,10 @@ const ui = {
   menuWeather: $('menu-weather'),
   menuGearbox: $('menu-gearbox'),
   menuQuality: $('menu-quality'),
+  menuNet: $('menu-net'),
+  menuRoom: $('menu-room'),
+  menuProps: $('menu-props'),
+  menuRoster: $('menu-roster'),
   miniGear: $('mini-gear'),
   miniRpm: $('mini-rpm'),
   miniSpeed: $('mini-speed'),
@@ -307,6 +314,8 @@ let trackDistance = 0;
 let dustTimer = 0;
 let exhaustTimer = 0;
 let contactShadow;
+let rangeProps;
+let net;
 let muzzleFlashTimeout = 0;
 
 const clock = new THREE.Clock();
@@ -507,6 +516,9 @@ const app = {
       objective,
       projectiles: projectiles.length,
       targets: targetStates,
+      props: rangeProps?.count || 0,
+      propBatches: rangeProps?.drawCalls || 0,
+      net: net?.getState() || null,
     };
   },
 };
@@ -602,6 +614,7 @@ function buildScene() {
 
   terrain = createTerrain({ lowPower });
   scene.add(terrain.group);
+  rangeProps = createRangeProps({ scene, lowPower });
 
   const sky = new Sky();
   sky.scale.setScalar(5000);
@@ -2519,6 +2532,25 @@ function updateHud(dt) {
   }
 }
 
+function updateNetUi(state) {
+  if (!state) return;
+  const online = state.status === 'online';
+  const label = online ? `${state.count} ONLINE` : state.status === 'connecting' ? 'LINKING' : 'SOLO';
+  if (ui.netStatus) ui.netStatus.textContent = label;
+  if (ui.menuNet) {
+    ui.menuNet.textContent = online
+      ? `LINKED · ${state.count}/${state.max}`
+      : state.status === 'connecting' ? 'CONNECTING' : 'SOLO / OFFLINE';
+  }
+  if (ui.menuRoom) ui.menuRoom.textContent = state.room;
+  if (ui.menuProps) ui.menuProps.textContent = `${rangeProps?.count || 100} / ${rangeProps?.drawCalls || 4} BATCHES`;
+  if (ui.menuRoster) {
+    ui.menuRoster.textContent = state.roster?.length
+      ? state.roster.join(' · ')
+      : online ? 'NO OTHER COMMANDERS IN RANGE' : 'LOCAL RANGE';
+  }
+}
+
 let simAccumulator = 0;
 let adaptiveTimer = 0;
 let cullTimer = 0;
@@ -2605,6 +2637,15 @@ function animate() {
         terrain.updateCulling(camera.position);
       }
     }
+    net?.update(dt, {
+      x: tank.x,
+      y: tank.y,
+      z: tank.z,
+      heading: tank.heading,
+      turretYaw: tank.turretYaw,
+      gunPitch: tank.gunPitch,
+      speed: tank.speed,
+    });
     updateHud(dt);
   }
   if (environment && !paused) fx.setWind(environment.wind);
@@ -2960,6 +3001,8 @@ async function init() {
   bindInput();
   animate();
   await loadVehicle();
+  net = createRangeNet({ scene, onChange: updateNetUi });
+  updateNetUi(net.getState());
 }
 
 init().catch(showError);
